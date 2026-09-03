@@ -35,7 +35,7 @@ function createTestApp() {
       </body></html>
     `);
   });
-  
+
   // A deterministic upstream failure for navigation error handling tests.
   app.get('/unavailable', (req, res) => {
     res.status(503).send('Temporarily unavailable');
@@ -405,12 +405,14 @@ function createTestApp() {
   });
 
   app.get('/popup-target', (req, res) => {
+    const closesItself = req.query.close === '1';
     res.send(`
       <!DOCTYPE html>
       <html><head><title>Popup Target</title></head>
       <body>
         <h1>Popup Target Page</h1>
         <p>This page was opened as a popup.</p>
+        ${closesItself ? '<script>setTimeout(() => window.close(), 50)</script>' : ''}
       </body></html>
     `);
   });
