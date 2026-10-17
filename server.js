@@ -6819,6 +6819,13 @@ app.get('/tabs/:tabId/images', async (req, res) => {
  *         required: true
  *         schema:
  *           type: string
+ *       - name: fullPage
+ *         in: query
+ *         required: false
+ *         description: Capture the full scrollable page instead of the viewport.
+ *         schema:
+ *           type: boolean
+ *           default: false
  *     responses:
  *       200:
  *         description: Screenshot.
