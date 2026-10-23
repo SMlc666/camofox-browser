@@ -83,7 +83,15 @@ The Docker image includes yt-dlp. For local dev, install it for the `/youtube/tr
 openclaw plugins install @askjo/camofox-browser
 ```
 
-**Tools:** `camofox_create_tab`  |  `camofox_snapshot`  |  `camofox_click`  |  `camofox_type`  |  `camofox_upload`  |  `camofox_navigate`  |  `camofox_scroll`  |  `camofox_screenshot`  |  `camofox_close_tab`  |  `camofox_evaluate`  |  `camofox_list_tabs`  |  `camofox_import_cookies`
+**Full HTTP ↔ agent-tool parity.** Every browser action Camofox exposes over HTTP is also a first-class MCP / OpenClaw tool, defined once in a single shared contract (`mcp/lib/tool-contracts.mjs`) so the two front doors can never drift. A build-time parity gate (`tests/unit/mcpHttpParity.test.js`) fails if a new browser action is added to the HTTP API without a matching tool. There are **31 tools**:
+
+**Tabs & navigation:** `camofox_create_tab` | `camofox_list_tabs` | `camofox_close_tab` | `camofox_activate` | `camofox_navigate` | `camofox_back` | `camofox_forward` | `camofox_refresh` | `camofox_wait`
+
+**Reading the page:** `camofox_snapshot` | `camofox_ax` | `camofox_actionables` | `camofox_table_rows` | `camofox_links` | `camofox_images` | `camofox_extract` | `camofox_screenshot`
+
+**Interacting:** `camofox_click` | `camofox_type` | `camofox_press` | `camofox_select` | `camofox_scroll` | `camofox_mouse_wheel` | `camofox_drag` | `camofox_upload` | `camofox_viewport`
+
+**Scripting & state:** `camofox_evaluate` | `camofox_init_script` | `camofox_import_cookies` | `camofox_export_storage_state` | `camofox_import_local_storage`
 
 ### Standalone
 
