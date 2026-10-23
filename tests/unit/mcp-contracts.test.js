@@ -88,8 +88,21 @@ afterEach(() => {
 
 // --- Schema sanity ----------------------------------------------------------
 describe('TOOL_DEFS', () => {
-  test('exposes exactly 12 tools', () => {
-    expect(TOOL_DEFS).toHaveLength(12);
+  test('exposes exactly 21 tools', () => {
+    expect(TOOL_DEFS).toHaveLength(21);
+  });
+
+  test('click accepts coordinates and semantic preconditions', () => {
+    const schema = TOOL_DEFS.find((t) => t.name === 'camofox_click').inputSchema;
+    expect(schema.required).toEqual(['tabId']);
+    expect(schema.properties.coordinates.required).toEqual(['x', 'y']);
+    expect(schema.properties.expected_role.type).toBe('string');
+    expect(schema.properties.expected_accessible_name.type).toBe('string');
+  });
+
+  test('snapshot exposes an optional annotateScreenshot boolean', () => {
+    const schema = TOOL_DEFS.find((t) => t.name === 'camofox_snapshot').inputSchema;
+    expect(schema.properties.annotateScreenshot.type).toBe('boolean');
   });
 
   test('upload requires tabId + path and accepts a string or an array of paths', () => {
@@ -135,6 +148,18 @@ describe('buildRequest', () => {
     ['camofox_close_tab', { tabId: 't1' }, { method: 'DELETE', path: '/tabs/t1?userId=u1', auth: 'accessKey', kind: 'json' }],
     ['camofox_evaluate', { tabId: 't1', expression: '1+1' }, { method: 'POST', path: '/tabs/t1/evaluate', auth: 'accessKey', kind: 'json' }],
     ['camofox_list_tabs', {}, { method: 'GET', path: '/tabs?userId=u1', auth: 'accessKey', kind: 'json' }],
+    ['camofox_activate', { tabId: 't1' }, { method: 'POST', path: '/tabs/t1/activate', auth: 'accessKey', kind: 'json' }],
+    ['camofox_ax', { tabId: 't1' }, { method: 'GET', path: '/tabs/t1/ax?userId=u1', auth: 'accessKey', kind: 'json' }],
+    ['camofox_actionables', { tabId: 't1' }, { method: 'GET', path: '/tabs/t1/actionables?userId=u1', auth: 'accessKey', kind: 'json' }],
+    ['camofox_actionables', { tabId: 't1', limit: 50 }, { method: 'GET', path: '/tabs/t1/actionables?userId=u1&limit=50', auth: 'accessKey', kind: 'json' }],
+    ['camofox_table_rows', { tabId: 't1', tableId: 'table-0' }, { method: 'GET', path: '/tabs/t1/tables/table-0/rows?userId=u1', auth: 'accessKey', kind: 'json' }],
+    ['camofox_table_rows', { tabId: 't1', tableId: 'table-0', offset: 20, limit: 10 }, { method: 'GET', path: '/tabs/t1/tables/table-0/rows?userId=u1&offset=20&limit=10', auth: 'accessKey', kind: 'json' }],
+    ['camofox_mouse_wheel', { tabId: 't1', ref: 'e1', deltaY: 300 }, { method: 'POST', path: '/tabs/t1/mouse-wheel', auth: 'accessKey', kind: 'json' }],
+    ['camofox_drag', { tabId: 't1', start: { x: 1, y: 2 }, end: { x: 3, y: 4 } }, { method: 'POST', path: '/tabs/t1/drag', auth: 'accessKey', kind: 'json' }],
+    ['camofox_init_script', { tabId: 't1', script: 'window.x=1' }, { method: 'POST', path: '/tabs/t1/init-script', auth: 'accessKey', kind: 'json' }],
+    ['camofox_export_storage_state', {}, { method: 'GET', path: '/sessions/u1/storage_state', auth: 'accessKey', kind: 'json' }],
+    ['camofox_import_local_storage', { origins: [{ origin: 'https://x.com', localStorage: [{ name: 'a', value: 'b' }] }] }, { method: 'POST', path: '/sessions/u1/local-storage', auth: 'accessKey', kind: 'json' }],
+    ['camofox_snapshot', { tabId: 't1', annotateScreenshot: true }, { method: 'GET', path: '/tabs/t1/snapshot?userId=u1&includeScreenshot=true&annotateScreenshot=true', auth: 'accessKey', kind: 'snapshot' }],
   ])('%s → %s %s (auth=%s)', (name, args, expected) => {
     const spec = buildRequest(name, args, CTX);
     expect(spec.method).toBe(expected.method);

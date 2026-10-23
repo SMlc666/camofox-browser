@@ -1,7 +1,7 @@
 /**
  * Canonical tool contracts for the camofox-browser REST API.
  *
- * Single source of truth shared by two hosts that expose the same 12 tools:
+ * Single source of truth shared by two hosts that expose the same 21 tools:
  *   - mcp/server.mjs   (stdio MCP server for Claude Code, Codex, agy, Cursor, opencode)
  *   - plugin.ts        (OpenClaw plugin)
  *
@@ -64,7 +64,7 @@ const SEARCH_MACROS = [
 ];
 
 /**
- * The 12 tools, identical schema for both hosts. Edit here and both update.
+ * The 21 tools, identical schema for both hosts. Edit here and both update.
  * @type {ToolDef[]}
  */
 export const TOOL_DEFS = [
@@ -94,19 +94,40 @@ export const TOOL_DEFS = [
           type: 'number',
           description: 'Character offset for paginated snapshots. Use nextOffset from a previous truncated response.',
         },
+        annotateScreenshot: {
+          type: 'boolean',
+          description: 'Include screenshotAnnotations: per-ref bounding boxes aligned with the screenshot pixel space, for coordinate clicking (default false).',
+        },
       },
       required: ['tabId'],
     },
   },
   {
     name: 'camofox_click',
-    description: 'Click an element in a Camoufox tab by ref (e.g., e1) or CSS selector.',
+    description:
+      'Click an element in a Camoufox tab by ref (e.g., e1), CSS selector, or exact {x, y} coordinates. ' +
+      'Coordinates pair with the screenshotAnnotations from camofox_snapshot. ' +
+      'Optionally pass expected_role and/or expected_accessible_name to assert the target is still the element you expected before the click lands.',
     inputSchema: {
       type: 'object',
       properties: {
         tabId: { type: 'string', description: 'Tab identifier' },
         ref: { type: 'string', description: 'Element ref from snapshot (e.g., e1)' },
         selector: { type: 'string', description: 'CSS selector (alternative to ref)' },
+        coordinates: {
+          type: 'object',
+          properties: { x: { type: 'number' }, y: { type: 'number' } },
+          required: ['x', 'y'],
+          description: 'Exact viewport pixel coordinates (alternative to ref/selector)',
+        },
+        expected_role: {
+          type: 'string',
+          description: 'Assert the resolved target has this ARIA role before clicking',
+        },
+        expected_accessible_name: {
+          type: 'string',
+          description: 'Assert the resolved target has this accessible name before clicking',
+        },
       },
       required: ['tabId'],
     },
@@ -233,6 +254,146 @@ export const TOOL_DEFS = [
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
+    name: 'camofox_activate',
+    description: 'Bring a Camoufox tab to the front (focus/activate it).',
+    inputSchema: {
+      type: 'object',
+      properties: { tabId: { type: 'string', description: 'Tab identifier' } },
+      required: ['tabId'],
+    },
+  },
+  {
+    name: 'camofox_ax',
+    description:
+      'Get the raw accessibility tree of a Camoufox page (unfiltered, no element refs). Use camofox_snapshot for interaction; use this to inspect the full ARIA structure.',
+    inputSchema: {
+      type: 'object',
+      properties: { tabId: { type: 'string', description: 'Tab identifier' } },
+      required: ['tabId'],
+    },
+  },
+  {
+    name: 'camofox_actionables',
+    description:
+      'List the clickable and fillable elements on a Camoufox page as candidate interaction targets, each with its ref.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'string', description: 'Tab identifier' },
+        limit: { type: 'number', description: 'Maximum candidates to return (default 200)' },
+      },
+      required: ['tabId'],
+    },
+  },
+  {
+    name: 'camofox_table_rows',
+    description:
+      'Read one page of rows from a table on a Camoufox page. Table ids come from camofox_snapshot (table.id or positional table-N). Use offset/limit to page through large tables.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'string', description: 'Tab identifier' },
+        tableId: { type: 'string', description: 'Table id from a snapshot (e.g., table-0)' },
+        offset: { type: 'number', description: 'Row offset to start from (default 0)' },
+        limit: { type: 'number', description: 'Maximum rows to return' },
+      },
+      required: ['tabId', 'tableId'],
+    },
+  },
+  {
+    name: 'camofox_mouse_wheel',
+    description:
+      'Send a mouse wheel scroll over a specific element (by ref) or coordinate in a Camoufox tab. Unlike camofox_scroll (which scrolls the page), this wheels over nested scrollable containers and hover menus.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'string', description: 'Tab identifier' },
+        ref: { type: 'string', description: 'Element ref to wheel over (from snapshot)' },
+        x: { type: 'number', description: 'X coordinate to wheel over (with y; alternative to ref)' },
+        y: { type: 'number', description: 'Y coordinate to wheel over (with x; alternative to ref)' },
+        deltaX: { type: 'number', description: 'Horizontal wheel delta' },
+        deltaY: { type: 'number', description: 'Vertical wheel delta' },
+      },
+      required: ['tabId'],
+    },
+  },
+  {
+    name: 'camofox_drag',
+    description:
+      'Perform a trusted press-move-release mouse drag between two coordinates in a Camoufox tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'string', description: 'Tab identifier' },
+        start: {
+          type: 'object',
+          properties: { x: { type: 'number' }, y: { type: 'number' } },
+          required: ['x', 'y'],
+          description: 'Start point',
+        },
+        end: {
+          type: 'object',
+          properties: { x: { type: 'number' }, y: { type: 'number' } },
+          required: ['x', 'y'],
+          description: 'End point',
+        },
+        steps: { type: 'number', description: 'Intermediate move steps (default 20)' },
+        button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Mouse button (default left)' },
+      },
+      required: ['tabId', 'start', 'end'],
+    },
+  },
+  {
+    name: 'camofox_init_script',
+    description:
+      'Register a script that runs in the page context before every subsequent navigation in a Camoufox tab. Use to install fetch/XHR hooks that must catch the first request after a reload. Scripts accumulate and are dropped when the tab closes. Runs arbitrary JS, like camofox_evaluate.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'string', description: 'Tab identifier' },
+        script: { type: 'string', description: 'JavaScript source to run before each navigation' },
+      },
+      required: ['tabId', 'script'],
+    },
+  },
+  {
+    name: 'camofox_export_storage_state',
+    description:
+      'Export the current session cookies and storage state (Playwright storageState format) for the current user.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'camofox_import_local_storage',
+    description:
+      'Seed localStorage for one or more HTTP(S) origins in the current session. Each origin entry has { origin, localStorage: [{ name, value }] }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        origins: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 20,
+          items: {
+            type: 'object',
+            properties: {
+              origin: { type: 'string', description: 'HTTP or HTTPS origin, e.g. https://example.com' },
+              localStorage: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: { name: { type: 'string' }, value: { type: 'string' } },
+                  required: ['name', 'value'],
+                },
+              },
+            },
+            required: ['origin', 'localStorage'],
+          },
+        },
+      },
+      required: ['origins'],
+    },
+  },
+  {
     name: 'camofox_import_cookies',
     description:
       'Import cookies into the current Camoufox session (Netscape cookie file). Use to authenticate to sites like LinkedIn without interactive login. Requires CAMOFOX_API_KEY on the REST server.',
@@ -295,6 +456,7 @@ export function buildRequest(name, args, ctx) {
     case 'camofox_snapshot': {
       const params = new URLSearchParams({ userId, includeScreenshot: 'true' });
       if (args.offset != null && args.offset !== '') params.set('offset', String(args.offset));
+      if (args.annotateScreenshot === true || args.annotateScreenshot === 'true') params.set('annotateScreenshot', 'true');
       return {
         method: 'GET',
         path: `/tabs/${args.tabId}/snapshot?${params}`,
@@ -366,6 +528,81 @@ export function buildRequest(name, args, ctx) {
         auth: 'accessKey',
         responseKind: 'json',
         body: { userId, expression: args.expression },
+      };
+    case 'camofox_activate':
+      return {
+        method: 'POST',
+        path: `/tabs/${args.tabId}/activate`,
+        auth: 'accessKey',
+        responseKind: 'json',
+        body: { userId },
+      };
+    case 'camofox_ax':
+      return {
+        method: 'GET',
+        path: `/tabs/${args.tabId}/ax?${new URLSearchParams({ userId })}`,
+        auth: 'accessKey',
+        responseKind: 'json',
+      };
+    case 'camofox_actionables': {
+      const params = new URLSearchParams({ userId });
+      if (args.limit != null && args.limit !== '') params.set('limit', String(args.limit));
+      return {
+        method: 'GET',
+        path: `/tabs/${args.tabId}/actionables?${params}`,
+        auth: 'accessKey',
+        responseKind: 'json',
+      };
+    }
+    case 'camofox_table_rows': {
+      const params = new URLSearchParams({ userId });
+      if (args.offset != null && args.offset !== '') params.set('offset', String(args.offset));
+      if (args.limit != null && args.limit !== '') params.set('limit', String(args.limit));
+      return {
+        method: 'GET',
+        path: `/tabs/${args.tabId}/tables/${encodeURIComponent(args.tableId)}/rows?${params}`,
+        auth: 'accessKey',
+        responseKind: 'json',
+      };
+    }
+    case 'camofox_mouse_wheel':
+      return {
+        method: 'POST',
+        path: `/tabs/${args.tabId}/mouse-wheel`,
+        auth: 'accessKey',
+        responseKind: 'json',
+        body: { ...without(args), userId },
+      };
+    case 'camofox_drag':
+      return {
+        method: 'POST',
+        path: `/tabs/${args.tabId}/drag`,
+        auth: 'accessKey',
+        responseKind: 'json',
+        body: { ...without(args), userId },
+      };
+    case 'camofox_init_script':
+      return {
+        method: 'POST',
+        path: `/tabs/${args.tabId}/init-script`,
+        auth: 'accessKey',
+        responseKind: 'json',
+        body: { userId, script: args.script },
+      };
+    case 'camofox_export_storage_state':
+      return {
+        method: 'GET',
+        path: `/sessions/${encodeURIComponent(userId)}/storage_state`,
+        auth: 'accessKey',
+        responseKind: 'json',
+      };
+    case 'camofox_import_local_storage':
+      return {
+        method: 'POST',
+        path: `/sessions/${encodeURIComponent(userId)}/local-storage`,
+        auth: 'accessKey',
+        responseKind: 'json',
+        body: { origins: args.origins },
       };
     case 'camofox_list_tabs':
       return {

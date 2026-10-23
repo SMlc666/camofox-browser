@@ -127,6 +127,15 @@
       "camofox_close_tab",
       "camofox_evaluate",
       "camofox_list_tabs",
+      "camofox_activate",
+      "camofox_ax",
+      "camofox_actionables",
+      "camofox_table_rows",
+      "camofox_mouse_wheel",
+      "camofox_drag",
+      "camofox_init_script",
+      "camofox_export_storage_state",
+      "camofox_import_local_storage",
       "camofox_import_cookies"
     ]
   }
