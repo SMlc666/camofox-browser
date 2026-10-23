@@ -4743,6 +4743,85 @@ app.post('/tabs/:tabId/scroll', async (req, res) => {
   }
 });
 
+/**
+ * @openapi
+ * /tabs/{tabId}/activate:
+ *   post:
+ *     tags: [Interaction]
+ *     summary: Bring a tab to the front
+ *     description: Make the tab the active/foreground page in its browser context. Useful when driving multiple tabs so input and screenshots target the intended tab.
+ *     parameters:
+ *       - name: tabId
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [userId]
+ *             properties:
+ *               userId:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Tab activated.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *       400:
+ *         description: Missing userId.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Tab not found.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       410:
+ *         description: Tab was destroyed.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+app.post('/tabs/:tabId/activate', async (req, res) => {
+  const tabId = req.params.tabId;
+  try {
+    const { userId } = req.body || {};
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+
+    const session = sessions.get(normalizeUserId(userId));
+    const found = session && findTab(session, tabId);
+    if (!found) return tabNotFoundResponse(res, req.params.tabId || req.body?.tabId);
+    session.lastAccess = Date.now();
+
+    await withUserLimit(userId, () => withTabLock(tabId, async () => {
+      const currentSession = sessions.get(normalizeUserId(userId));
+      const current = currentSession && findTab(currentSession, tabId);
+      if (!current || current.tabState !== found.tabState || current.tabState.page?.isClosed?.()) {
+        throw new Error('Tab destroyed');
+      }
+      current.tabState.toolCalls++;
+      current.tabState.consecutiveTimeouts = 0;
+      current.tabState.consecutiveFailures = 0;
+      await current.tabState.page.bringToFront();
+    }, HANDLER_TIMEOUT_MS, () => destroyTimedOutTab(session, tabId, 'operation_timeout', userId)));
+
+    res.json({ ok: true, tabId });
+  } catch (err) {
+    log('error', 'tab activation failed', { reqId: req.reqId, tabId, error: err.message });
+    handleRouteError(err, req, res);
+  }
+});
+
 // Viewport
 /**
  * @openapi
