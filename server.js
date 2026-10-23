@@ -1294,6 +1294,7 @@ function normalizeUserId(userId) {
 }
 
 const sessionCreations = new Map();
+const sessionTeardowns = new Map();
 
 function clearSessionLocks(session) {
   if (!session?.tabGroups) return;
@@ -1309,13 +1310,36 @@ function clearSessionLocks(session) {
   refreshTabLockQueueDepth();
 }
 
-async function closeSession(userId, session, {
+// Per-user coalescing wrapper: a session can be torn down from several places
+// at once (API delete, idle timeout, dead-context sweep, and — since the
+// memory-pressure watchdog became async — overlapping 30s ticks). Running two
+// teardowns on the same session races the session:destroying checkpoint and
+// double-counts metrics. Serialize per userId so each session closes exactly
+// once; concurrent callers await the same promise.
+async function closeSession(userId, session, options = {}) {
+  if (!session) return;
+  const key = normalizeUserId(userId);
+  const existing = sessionTeardowns.get(key);
+  if (existing) {
+    if (existing.session === session) return existing.promise;
+    await existing.promise.catch(() => {});
+  }
+  session._closing = true;
+  const entry = { session, promise: null };
+  entry.promise = closeSessionImpl(key, session, options);
+  sessionTeardowns.set(key, entry);
+  try {
+    return await entry.promise;
+  } finally {
+    if (sessionTeardowns.get(key) === entry) sessionTeardowns.delete(key);
+  }
+}
+
+async function closeSessionImpl(userId, session, {
   reason = 'session_closed',
   clearDownloads = true,
   clearLocks = true,
 } = {}) {
-  if (!session) return;
-
   const key = normalizeUserId(userId);
 
   // Drain locks BEFORE closing context — queued operations get clean "Tab destroyed"
@@ -1354,6 +1378,10 @@ async function closeAllSessions(reason, { clearDownloads = true, clearLocks = tr
 
 async function getSession(userId, { trace = false } = {}) {
   const key = normalizeUserId(userId);
+  // If a teardown for this user is in flight, wait for it so we never hand back
+  // or rebuild on top of a session that is mid-close.
+  const pendingTeardown = sessionTeardowns.get(key);
+  if (pendingTeardown) await pendingTeardown.promise.catch(() => {});
   let session = sessions.get(key);
   
   // Check if existing session's context is still alive
@@ -1375,6 +1403,12 @@ async function getSession(userId, { trace = false } = {}) {
   
   if (!session) {
     session = await coalesceInflight(sessionCreations, key, async () => {
+      // A teardown may have started between the check above and here; wait it
+      // out and reuse a live replacement if one appeared.
+      const inflightTeardown = sessionTeardowns.get(key);
+      if (inflightTeardown) await inflightTeardown.promise.catch(() => {});
+      const replacement = sessions.get(key);
+      if (replacement && !replacement._closing) return replacement;
       if (sessions.size >= MAX_SESSIONS) {
         throw Object.assign(
           new Error('Maximum concurrent sessions reached'),
@@ -6313,12 +6347,29 @@ setInterval(() => {
 // Note: if the threshold is hit while sessions are routinely reopened at the
 // same scale, this will restart in a loop — the log lines below make that
 // visible; in that case raise BROWSER_RSS_RESTART_THRESHOLD_MB.
+//
+// Two guards keep this from thrashing:
+//  - _memPressureInFlight: only one memory restart runs at a time, since the
+//    active-phase session close can itself stall on the hung storageState call
+//    we are trying to recover from, and the 30s timer would otherwise re-enter
+//    and run a second concurrent teardown of the same sessions.
+//  - MEM_PRESSURE_RESTART_COOLDOWN_MS: skip the whole check for a while after a
+//    restart. A just-killed Camoufox tree lingers for tens of seconds, and the
+//    name-based RSS fallback sums old + new firefox processes by name, so a
+//    fresh browser can look instantly over-threshold and get re-killed.
+const MEM_PRESSURE_RESTART_COOLDOWN_MS = 120_000;
+let _memPressureInFlight = false;
 setInterval(async () => {
+  if (_memPressureInFlight) return;
   try {
     if (!browser) return;
+    if (_lastBrowserRestartAt && (Date.now() - _lastBrowserRestartAt) < MEM_PRESSURE_RESTART_COOLDOWN_MS) return;
     const idle = sessions.size === 0;
     const mem = process.memoryUsage();
     const nativeMemMb = Math.round((mem.rss - mem.heapUsed) / 1048576);
+    // During the post-restart window the name fallback is unreliable (it would
+    // count a dying old tree); the cooldown above already excludes that window,
+    // so by here the PID-tree reading is the trustworthy source.
     const browserRssMb = browserProcessTreeRssMb(_browserPid()) ?? browserProcessNameRssMb();
 
     let reason = null;
@@ -6350,6 +6401,7 @@ setInterval(async () => {
     }
     if (!reason) return;
 
+    _memPressureInFlight = true;
     browserRestartsTotal.labels(reason).inc();
     if (!idle) {
       try {
@@ -6358,11 +6410,15 @@ setInterval(async () => {
         log('warn', 'memory pressure session close failed', { error: err.message });
       }
     }
-    closeBrowserFully(reason).catch((err) => {
+    try {
+      await closeBrowserFully(reason);
+    } catch (err) {
       log('error', 'memory pressure browser close failed', { reason, error: err.message });
-    });
+    }
   } catch (err) {
     log('warn', 'memory pressure check failed', { error: err.message });
+  } finally {
+    _memPressureInFlight = false;
   }
 }, 30_000);
 
