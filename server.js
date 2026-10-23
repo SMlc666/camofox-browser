@@ -3752,6 +3752,71 @@ app.get('/tabs/:tabId/snapshot', async (req, res) => {
   }
 });
 
+/**
+ * @openapi
+ * /tabs/{tabId}/ax:
+ *   get:
+ *     tags: [Content]
+ *     summary: Raw accessibility (ARIA) snapshot
+ *     description: Return the page's raw ariaSnapshot() YAML plus url, title, and viewport. Lower-level than /snapshot — it does not build or annotate refs, extract DOM structure, or manufacture candidates. Intended as an AX transport for decision models.
+ *     parameters:
+ *       - name: tabId
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - name: userId
+ *         in: query
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Raw AX snapshot.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *       400:
+ *         description: Missing userId.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Tab not found.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+app.get('/tabs/:tabId/ax', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const session = sessions.get(normalizeUserId(userId));
+    const found = session && findTab(session, req.params.tabId);
+    if (!found) return tabNotFoundResponse(res, req.params.tabId);
+    session.lastAccess = Date.now();
+    const { tabState } = found;
+    tabState.toolCalls++; tabState.consecutiveTimeouts = 0; tabState.consecutiveFailures = 0;
+
+    // Deliberately raw: this route is the AX transport for decision models.
+    // It does not build refs, inspect DOM nodes, extract page structure, or
+    // manufacture site-specific candidates.
+    const result = await withUserLimit(userId, () => withTimeout((async () => {
+      const url = tabState.page.url();
+      const title = await tabState.page.title().catch(() => '');
+      return { url, title, viewport: tabState.page.viewportSize() || null, snapshot: await getAriaSnapshot(tabState.page) };
+    })(), requestTimeoutMs(), 'ax'));
+    log('info', 'ax', { reqId: req.reqId, tabId: req.params.tabId, url: result.url, snapshotLen: result.snapshot?.length });
+    res.json(result);
+  } catch (err) {
+    log('error', 'ax failed', { reqId: req.reqId, tabId: req.params.tabId, error: err.message });
+    handleRouteError(err, req, res);
+  }
+});
+
 // Wait for page ready
 /**
  * @openapi

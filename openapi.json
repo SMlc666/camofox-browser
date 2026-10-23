@@ -774,6 +774,65 @@
         }
       }
     },
+    "/tabs/{tabId}/ax": {
+      "get": {
+        "tags": [
+          "Content"
+        ],
+        "summary": "Raw accessibility (ARIA) snapshot",
+        "description": "Return the page's raw ariaSnapshot() YAML plus url, title, and viewport. Lower-level than /snapshot — it does not build or annotate refs, extract DOM structure, or manufacture candidates. Intended as an AX transport for decision models.",
+        "parameters": [
+          {
+            "name": "tabId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw AX snapshot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing userId.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Tab not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/tabs/{tabId}/wait": {
       "post": {
         "tags": [
