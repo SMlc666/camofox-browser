@@ -14,6 +14,7 @@ import { normalizePlaywrightProxy, createProxyPool, buildProxyUrl } from './lib/
 import { createFlyHelpers } from './lib/fly.js';
 import { createPluginEvents, loadPlugins, typeEventPayload } from './lib/plugins.js';
 import { requireAuth, accessKeyMiddleware, timingSafeCompare as _timingSafeCompare, isLoopbackAddress as _isLoopbackAddress } from './lib/auth.js';
+import { createStorageStateExportHandler } from './lib/storage-state.js';
 import { windowSnapshot } from './lib/snapshot.js';
 import { extractPageStructure, extractTableRows, attachStructureRefs } from './lib/page-structure.js';
 import {
@@ -482,6 +483,154 @@ app.post('/sessions/:userId/cookies', express.json({ limit: '512kb' }), async (r
   } catch (err) {
     failuresTotal.labels(classifyError(err), 'set_cookies').inc();
     log('error', 'cookie import failed', { reqId: req.reqId, error: err.message });
+    res.status(500).json({ error: safeError(err) });
+  }
+});
+
+/**
+ * @openapi
+ * /sessions/{userId}/storage_state:
+ *   get:
+ *     tags: [Sessions]
+ *     summary: Export a session's storage state
+ *     description: Return the live Playwright storage state (cookies + per-origin localStorage) for an active session. Contains authenticated material; requires auth and must not be logged by callers.
+ *     parameters:
+ *       - name: userId
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Storage state (cookies and origins).
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *       404:
+ *         description: No active session for the user.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+app.get('/sessions/:userId/storage_state', authMiddleware(), (req, res) => createStorageStateExportHandler({
+  sessions,
+  normalizeUserId,
+  events: pluginEvents,
+  log,
+})(req, res));
+
+/**
+ * @openapi
+ * /sessions/{userId}/local-storage:
+ *   post:
+ *     tags: [Sessions]
+ *     summary: Import localStorage into a session
+ *     description: Seed per-origin localStorage for a session by visiting each declared origin and writing the entries. Origins must be unique HTTP/HTTPS origins without credentials (max 20); each origin may carry up to 500 entries.
+ *     parameters:
+ *       - name: userId
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [origins]
+ *             properties:
+ *               origins:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   required: [origin, localStorage]
+ *                   properties:
+ *                     origin:
+ *                       type: string
+ *                     localStorage:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         required: [name, value]
+ *                         properties:
+ *                           name:
+ *                             type: string
+ *                           value:
+ *                             type: string
+ *     responses:
+ *       200:
+ *         description: Import result.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *       400:
+ *         description: Invalid request body.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Import failed.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+app.post('/sessions/:userId/local-storage', authMiddleware(), express.json({ limit: '512kb' }), async (req, res) => {
+  try {
+    const origins = req.body?.origins;
+    if (!Array.isArray(origins) || origins.length === 0 || origins.length > 20) {
+      return res.status(400).json({ error: 'origins must be a nonempty array with at most 20 entries' });
+    }
+    const seenOrigins = new Set();
+    let entries = 0;
+    for (const item of origins) {
+      if (!item || typeof item !== 'object' || typeof item.origin !== 'string' || !Array.isArray(item.localStorage)) {
+        return res.status(400).json({ error: 'Each origin must include origin and localStorage' });
+      }
+      let parsed;
+      try { parsed = new URL(item.origin); } catch { return res.status(400).json({ error: 'Invalid local-storage origin' }); }
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== item.origin || parsed.username || parsed.password || seenOrigins.has(item.origin)) {
+        return res.status(400).json({ error: 'Each local-storage origin must be a unique HTTP or HTTPS origin without credentials' });
+      }
+      seenOrigins.add(item.origin);
+      if (item.localStorage.length > 500 || item.localStorage.some(entry => !entry || typeof entry !== 'object' || typeof entry.name !== 'string' || !entry.name || typeof entry.value !== 'string')) {
+        return res.status(400).json({ error: 'Each localStorage entry must include a nonempty name and a string value; maximum 500 per origin' });
+      }
+      entries += item.localStorage.length;
+    }
+
+    const session = await getSession(req.params.userId);
+    for (const item of origins) {
+      const lease = acquirePageLease(session);
+      const page = setLeasedPage(lease, await session.context.newPage());
+      try {
+        await page.goto(item.origin, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+        if (new URL(page.url()).origin !== item.origin) {
+          return res.status(400).json({ error: 'Local-storage origin redirected outside its declared origin' });
+        }
+        const imported = await page.evaluate((localStorageEntries) => {
+          localStorage.clear();
+          for (const { name, value } of localStorageEntries) localStorage.setItem(name, value);
+          return localStorageEntries.every(({ name, value }) => localStorage.getItem(name) === value)
+            && localStorage.length === localStorageEntries.length;
+        }, item.localStorage);
+        if (!imported) throw new Error('Browser did not retain imported local storage');
+      } finally {
+        await safePageClose(page);
+        releasePageLease(session, lease);
+      }
+    }
+    const result = { ok: true, userId: String(req.params.userId), origins: origins.length, entries };
+    log('info', 'local storage imported', { reqId: req.reqId, userId: result.userId, origins: result.origins, entries });
+    res.json(result);
+  } catch (err) {
+    failuresTotal.labels(classifyError(err), 'set_local_storage').inc();
+    log('error', 'local-storage import failed', { reqId: req.reqId, error: err.message });
     res.status(500).json({ error: safeError(err) });
   }
 });
