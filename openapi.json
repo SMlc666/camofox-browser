@@ -861,6 +861,18 @@
                 "false"
               ]
             }
+          },
+          {
+            "name": "annotateScreenshot",
+            "in": "query",
+            "description": "When 'true', include screenshotAnnotations — per-ref bounding boxes ({ refId, role, name, x, y, width, height }) for visible elements, aligned with the screenshot pixel space.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
           }
         ],
         "responses": {
