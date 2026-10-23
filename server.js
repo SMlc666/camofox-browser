@@ -45,6 +45,7 @@ import { actionFromReq, classifyError } from './lib/request-utils.js';
 import { cleanupOrphanedTempFiles, cleanupStaleFirefoxProfiles, removeXvfbDisplayFiles } from './lib/tmp-cleanup.js';
 import { coalesceInflight } from './lib/inflight.js';
 import { INTERACTIVE_ROLES } from './lib/interactive-roles.js';
+import { SKIP_PATTERNS, normalizedAccessibleName, annotateAriaSnapshotRefs } from './lib/aria-annotate.js';
 import { selectOption } from './lib/select-option.js';
 import { visibleSelectorCandidate } from './lib/visible-selector.js';
 import { normalizeBrowserKey } from './lib/browser-key.js';
@@ -194,10 +195,7 @@ const ALLOWED_URL_SCHEMES = ['http:', 'https:'];
 
 // Accessible control roles are defined in lib/interactive-roles.js.
 
-// Patterns to skip (date pickers, calendar widgets -- NOT expiration/expiry fields)
-const SKIP_PATTERNS = [
-  /datepicker/i, /date.?picker/i, /calendar/i, /^date$/i
-];
+// SKIP_PATTERNS (date pickers / calendar widgets) now live in lib/aria-annotate.js.
 
 // Iframe support: URL patterns to SKIP (tracking, analytics, pixels)
 const IFRAME_SKIP_PATTERNS = [
@@ -2589,6 +2587,39 @@ async function getAriaSnapshot(page) {
   return mainYaml;
 }
 
+// Precondition check for click-by-ref: rebuild refs, then confirm the target
+// still matches the caller's expected role / accessible name before clicking.
+// Returns null when the target still matches (proceed), or a structured
+// mismatch result (with a fresh annotated snapshot) when it no longer does.
+async function semanticTargetMismatchResult(tabState, ref, expectedRole, expectedAccessibleName) {
+  const ariaYaml = await getAriaSnapshot(tabState.page);
+  tabState.refs = await refreshTabRefs(tabState, { reason: 'semantic_precondition' });
+  const current = tabState.refs.get(ref);
+  const roleMatches = !expectedRole || current?.role === expectedRole;
+  const nameMatches = expectedAccessibleName === undefined
+    || normalizedAccessibleName(current?.name) === normalizedAccessibleName(expectedAccessibleName);
+  if (roleMatches && nameMatches) return null;
+
+  const snapshot = annotateAriaSnapshotRefs(ariaYaml, tabState.refs);
+  tabState.lastSnapshot = snapshot;
+  return {
+    ok: false,
+    code: 'semantic_target_mismatch',
+    retryable: true,
+    recovery: 'use_returned_snapshot',
+    error: 'The referenced element no longer matches the requested role or accessible name. No click was performed; use the returned snapshot and a current ref.',
+    ref,
+    expected: {
+      ...(expectedRole ? { role: expectedRole } : {}),
+      ...(expectedAccessibleName !== undefined ? { accessibleName: expectedAccessibleName } : {}),
+    },
+    actual: current ? { role: current.role, accessibleName: current.name } : null,
+    url: tabState.page.url(),
+    snapshot,
+    refsCount: tabState.refs.size,
+  };
+}
+
 function refToLocator(page, ref, refs) {
   const info = refs.get(ref);
   if (!info) return null;
@@ -3686,38 +3717,7 @@ app.get('/tabs/:tabId/snapshot', async (req, res) => {
       tabState.refs = await refreshTabRefs(tabState, { reason: 'snapshot' });
       const ariaYaml = await getAriaSnapshot(tabState.page);
       const structure = attachStructureRefs(await extractPageStructure(tabState.page), tabState.refs);
-      let annotatedYaml = ariaYaml || '';
-      if (annotatedYaml && tabState.refs.size > 0) {
-        const refsByKey = new Map();
-        for (const [refId, info] of tabState.refs) {
-          const key = `${info.role}:${info.name}:${info.nth}`;
-          refsByKey.set(key, refId);
-        }
-        
-        const annotationCounts = new Map();
-        const lines = annotatedYaml.split('\n');
-        
-        annotatedYaml = lines.map(line => {
-          const match = line.match(/^(\s*-\s+)(\w+)(\s+"([^"]*)")?(.*)$/);
-          if (match) {
-            const [, prefix, role, nameMatch, name, suffix] = match;
-            const normalizedRole = role.toLowerCase();
-            if (name && SKIP_PATTERNS.some(p => p.test(name))) return line;
-            if (INTERACTIVE_ROLES.includes(normalizedRole)) {
-              const normalizedName = name || '';
-              const countKey = `${normalizedRole}:${normalizedName}`;
-              const nth = annotationCounts.get(countKey) || 0;
-              annotationCounts.set(countKey, nth + 1);
-              const key = `${normalizedRole}:${normalizedName}:${nth}`;
-              const refId = refsByKey.get(key);
-              if (refId) {
-                return `${prefix}${role}${nameMatch || ''} [${refId}]${suffix}`;
-              }
-            }
-          }
-          return line;
-        }).join('\n');
-      }
+      let annotatedYaml = annotateAriaSnapshotRefs(ariaYaml || '', tabState.refs);
       
       tabState.lastSnapshot = annotatedYaml;
       tabState.lastStructure = structure;
@@ -3849,11 +3849,18 @@ app.post('/tabs/:tabId/wait', async (req, res) => {
  *                 type: boolean
  *               coordinates:
  *                 type: object
+ *                 description: Viewport-coordinate click target. Use when no ref or selector addresses the element (e.g. a widget inside a cross-origin iframe).
  *                 properties:
  *                   x:
  *                     type: number
  *                   y:
  *                     type: number
+ *               expected_role:
+ *                 type: string
+ *                 description: Optional precondition. The click is refused with a 200 semantic_target_mismatch result (and a fresh snapshot) if the ref no longer resolves to this ARIA role.
+ *               expected_accessible_name:
+ *                 type: string
+ *                 description: Optional precondition. The click is refused with a 200 semantic_target_mismatch result (and a fresh snapshot) if the ref no longer resolves to this accessible name.
  *     responses:
  *       200:
  *         description: Click result with optional post-action snapshot.
@@ -3884,7 +3891,13 @@ app.post('/tabs/:tabId/click', async (req, res) => {
   const tabId = req.params.tabId;
   
   try {
-    const { userId, ref, selector } = req.body;
+    const { userId, ref, selector, coordinates, expected_role: expectedRoleInput, expected_accessible_name: expectedAccessibleNameInput } = req.body;
+    const expectedRole = typeof expectedRoleInput === 'string' && expectedRoleInput.trim()
+      ? expectedRoleInput.trim().toLowerCase()
+      : undefined;
+    const expectedAccessibleName = typeof expectedAccessibleNameInput === 'string'
+      ? expectedAccessibleNameInput
+      : undefined;
     if (!userId) return res.status(400).json({ error: 'userId required' });
     const session = sessions.get(normalizeUserId(userId));
     const found = session && findTab(session, tabId);
@@ -3894,8 +3907,9 @@ app.post('/tabs/:tabId/click', async (req, res) => {
     const { tabState } = found;
     tabState.toolCalls++; tabState.consecutiveTimeouts = 0; tabState.consecutiveFailures = 0;
     
-    if (!ref && !selector) {
-      return res.status(400).json({ error: 'ref or selector required' });
+    const hasCoordinates = coordinates && Number.isFinite(Number(coordinates.x)) && Number.isFinite(Number(coordinates.y));
+    if (!ref && !selector && !hasCoordinates) {
+      return res.status(400).json({ error: 'ref, selector, or coordinates {x, y} required' });
     }
     const selectorErr = selectorValidationError(selector);
     if (selectorErr) throw invalidSelectorError(selectorErr);
@@ -4014,7 +4028,25 @@ app.post('/tabs/:tabId/click', async (req, res) => {
         }
       };
       
-      if (ref) {
+      if (hasCoordinates) {
+        // Viewport-coordinate click (e.g. a caller-driven challenge widget inside a
+        // cross-origin iframe that exposes no refs). Native mouse events only.
+        const x = Number(coordinates.x);
+        const y = Number(coordinates.y);
+        await withTimeout(tabState.page.mouse.move(x, y), Math.max(1, remainingBudget()), 'native mouse move');
+        await tabState.page.waitForTimeout(50);
+        await withTimeout(tabState.page.mouse.click(x, y), Math.max(1, remainingBudget()), 'native mouse click');
+        log('info', 'coordinate click dispatched', { x: x.toFixed(0), y: y.toFixed(0) });
+        // Coordinate clicks usually target challenge widgets inside cross-origin
+        // iframes, where a post-click ref rebuild is slow and worthless. Return
+        // now; the caller re-snapshots before its next decision.
+        await tabState.page.waitForTimeout(300);
+        tabState.lastSnapshot = null;
+        tabState.refs = new Map();
+        const clickedUrl = tabState.page.url();
+        tabState.visitedUrls.add(clickedUrl);
+        return { ok: true, url: clickedUrl, refsAvailable: false };
+      } else if (ref) {
         let locator = refToLocator(tabState.page, ref, tabState.refs);
         if (!locator) {
           // Use tight timeout (4s max) to leave budget for click + post-click buildRefs
@@ -4034,6 +4066,15 @@ app.post('/tabs/:tabId/click', async (req, res) => {
         if (!locator) {
           const maxRef = tabState.refs.size > 0 ? `e${tabState.refs.size}` : 'none';
           throw new StaleRefsError(ref, maxRef, tabState.refs.size);
+        }
+        // Optional semantic precondition: refuse to click if the ref no longer
+        // resolves to the role / accessible name the caller expected. Prevents
+        // acting on a stale ref that now points at a different element.
+        if (expectedRole || expectedAccessibleName !== undefined) {
+          const mismatch = await semanticTargetMismatchResult(tabState, ref, expectedRole, expectedAccessibleName);
+          if (mismatch) return mismatch;
+          locator = refToLocator(tabState.page, ref, tabState.refs);
+          if (!locator) throw new StaleRefsError(ref, 'none', tabState.refs.size);
         }
         await doClick(locator, true);
       } else {

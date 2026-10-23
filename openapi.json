@@ -887,6 +887,7 @@
                   },
                   "coordinates": {
                     "type": "object",
+                    "description": "Viewport-coordinate click target. Use when no ref or selector addresses the element (e.g. a widget inside a cross-origin iframe).",
                     "properties": {
                       "x": {
                         "type": "number"
@@ -895,6 +896,14 @@
                         "type": "number"
                       }
                     }
+                  },
+                  "expected_role": {
+                    "type": "string",
+                    "description": "Optional precondition. The click is refused with a 200 semantic_target_mismatch result (and a fresh snapshot) if the ref no longer resolves to this ARIA role."
+                  },
+                  "expected_accessible_name": {
+                    "type": "string",
+                    "description": "Optional precondition. The click is refused with a 200 semantic_target_mismatch result (and a fresh snapshot) if the ref no longer resolves to this accessible name."
                   }
                 }
               }
