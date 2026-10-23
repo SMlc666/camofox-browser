@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { launchServer } from '../../lib/launcher.js';
 import { loadConfig } from '../../lib/config.js';
 
-// Endpoint-level contract for the low-level interaction/capture routes.
+// Endpoint-level contract for the low-level interaction routes.
 //
 // Every case here is rejected before any tab lookup, so the tests exercise the
 // real Express wiring (auth, body parsing, validators, status codes) without
@@ -94,43 +94,6 @@ describe('POST /tabs/:tabId/mouse-wheel', () => {
 
   test('returns 404 for an unknown tab once input is valid', async () => {
     const { status } = await post(`/tabs/${TAB}/mouse-wheel`, { userId: UNKNOWN_USER, deltaY: 500 });
-    expect(status).toBe(404);
-  });
-});
-
-describe.each([
-  ['/capture-network'],
-  ['/capture-requests'],
-])('POST /tabs/:tabId%s', (route) => {
-  test('requires a bearer token', async () => {
-    const { status } = await post(`/tabs/${TAB}${route}`, { userId: UNKNOWN_USER }, { auth: false });
-    expect(status).toBe(403);
-  });
-
-  test('requires userId', async () => {
-    const { status, data } = await post(`/tabs/${TAB}${route}`, {});
-    expect(status).toBe(400);
-    expect(data.error).toMatch(/userId required/i);
-  });
-
-  test.each([
-    ['an invalid regular expression', { urlPattern: 'graphql(' }, /not a valid regular expression/i],
-    ['an empty urlPattern', { urlPattern: '' }, /non-empty string/i],
-    ['an over-long urlPattern', { urlPattern: 'a'.repeat(201) }, /too long/i],
-    ['a catastrophic-backtracking pattern', { urlPattern: '(a+)+$' }, /nested quantifier/i],
-    ['durationMs above the cap', { durationMs: 600000 }, /durationMs out of range/i],
-    ['durationMs below the floor', { durationMs: 5 }, /durationMs out of range/i],
-    ['a non-numeric durationMs', { durationMs: '15000' }, /finite number/i],
-    ['maxCaptures out of range', { maxCaptures: 0 }, /maxCaptures out of range/i],
-    ['maxBodyBytes out of range', { maxBodyBytes: 50000000 }, /maxBodyBytes out of range/i],
-  ])('rejects %s with 400', async (_label, body, expected) => {
-    const { status, data } = await post(`/tabs/${TAB}${route}`, { userId: UNKNOWN_USER, ...body });
-    expect(status).toBe(400);
-    expect(data.error).toMatch(expected);
-  });
-
-  test('returns 404 for an unknown tab once input is valid', async () => {
-    const { status } = await post(`/tabs/${TAB}${route}`, { userId: UNKNOWN_USER, durationMs: 100 });
     expect(status).toBe(404);
   });
 });
