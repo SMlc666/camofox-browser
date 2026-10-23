@@ -43,6 +43,7 @@ const INFRA_HTTP_ONLY = new Set([
   'DELETE /sessions/{userId}/traces/{filename}',
   'GET /tabs/{tabId}/downloads',
   'GET /tabs/{tabId}/downloads/{downloadId}/content',
+  'POST /tabs/{tabId}/fetch-current-resource',
   'GET /tabs/{tabId}/stats',
   'DELETE /tabs/group/{listItemId}',
   // Deprecated legacy aliases kept only for backward compatibility.
@@ -55,17 +56,9 @@ const INFRA_HTTP_ONLY = new Set([
 // Browser-action endpoints that predate the shared contract. Known parity
 // debt: these should become MCP tools over time. Do not add to this list.
 const TOOL_BACKLOG_HTTP_ONLY = new Set([
-  'POST /tabs/{tabId}/back',
-  'POST /tabs/{tabId}/forward',
-  'POST /tabs/{tabId}/refresh',
-  'POST /tabs/{tabId}/press',
-  'POST /tabs/{tabId}/select',
-  'POST /tabs/{tabId}/viewport',
-  'POST /tabs/{tabId}/wait',
-  'POST /tabs/{tabId}/extract',
-  'POST /tabs/{tabId}/fetch-current-resource',
-  'GET /tabs/{tabId}/links',
-  'GET /tabs/{tabId}/images',
+  // Empty: every tool-like browser action now has MCP parity. If you add a
+  // new browser action to HTTP, give it an MCP tool rather than listing it
+  // here.
 ]);
 
 // Sentinels that survive encodeURIComponent/URLSearchParams unchanged, so the

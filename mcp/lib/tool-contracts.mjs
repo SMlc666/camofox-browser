@@ -1,7 +1,7 @@
 /**
  * Canonical tool contracts for the camofox-browser REST API.
  *
- * Single source of truth shared by two hosts that expose the same 21 tools:
+ * Single source of truth shared by two hosts that expose the same 31 tools:
  *   - mcp/server.mjs   (stdio MCP server for Claude Code, Codex, agy, Cursor, opencode)
  *   - plugin.ts        (OpenClaw plugin)
  *
@@ -64,7 +64,7 @@ const SEARCH_MACROS = [
 ];
 
 /**
- * The 21 tools, identical schema for both hosts. Edit here and both update.
+ * The 31 tools, identical schema for both hosts. Edit here and both update.
  * @type {ToolDef[]}
  */
 export const TOOL_DEFS = [
@@ -394,6 +394,130 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'camofox_back',
+    description: 'Go back one entry in a Camoufox tab\'s history.',
+    inputSchema: {
+      type: 'object',
+      properties: { tabId: { type: 'string', description: 'Tab identifier' } },
+      required: ['tabId'],
+    },
+  },
+  {
+    name: 'camofox_forward',
+    description: 'Go forward one entry in a Camoufox tab\'s history.',
+    inputSchema: {
+      type: 'object',
+      properties: { tabId: { type: 'string', description: 'Tab identifier' } },
+      required: ['tabId'],
+    },
+  },
+  {
+    name: 'camofox_refresh',
+    description: 'Reload the current page in a Camoufox tab.',
+    inputSchema: {
+      type: 'object',
+      properties: { tabId: { type: 'string', description: 'Tab identifier' } },
+      required: ['tabId'],
+    },
+  },
+  {
+    name: 'camofox_press',
+    description:
+      'Press a single keyboard key in a Camoufox tab (e.g., Enter, Escape, Tab, ArrowDown). Use camofox_type to enter text.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'string', description: 'Tab identifier' },
+        key: { type: 'string', description: 'Key name, e.g. Enter, Escape, Tab, ArrowDown' },
+      },
+      required: ['tabId', 'key'],
+    },
+  },
+  {
+    name: 'camofox_select',
+    description:
+      'Choose an option in a native <select> dropdown in a Camoufox tab, by ref or CSS selector. The option is matched by value or visible label.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'string', description: 'Tab identifier' },
+        ref: { type: 'string', description: 'Select element ref from snapshot' },
+        selector: { type: 'string', description: 'CSS selector (alternative to ref)' },
+        option: { type: 'string', description: 'Option value or visible label to select' },
+      },
+      required: ['tabId', 'option'],
+    },
+  },
+  {
+    name: 'camofox_viewport',
+    description: 'Set the viewport (window) size of a Camoufox tab in pixels.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'string', description: 'Tab identifier' },
+        width: { type: 'number', description: 'Viewport width in pixels' },
+        height: { type: 'number', description: 'Viewport height in pixels' },
+      },
+      required: ['tabId', 'width', 'height'],
+    },
+  },
+  {
+    name: 'camofox_wait',
+    description:
+      'Wait for a Camoufox page to settle before continuing: up to timeout ms, optionally until the network is idle, optionally dismissing a consent dialog.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'string', description: 'Tab identifier' },
+        timeout: { type: 'number', description: 'Maximum milliseconds to wait (default 10000)' },
+        waitForNetwork: { type: 'boolean', description: 'Wait for network idle (default true)' },
+        dismissConsent: { type: 'boolean', description: 'Attempt to dismiss a cookie/consent dialog (default false)' },
+      },
+      required: ['tabId'],
+    },
+  },
+  {
+    name: 'camofox_extract',
+    description:
+      'Extract structured data from a Camoufox page using a JSON Schema describing the fields to pull out. Returns data matching the schema.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'string', description: 'Tab identifier' },
+        schema: { type: 'object', description: 'JSON Schema describing the data to extract' },
+      },
+      required: ['tabId', 'schema'],
+    },
+  },
+  {
+    name: 'camofox_links',
+    description: 'List the links on a Camoufox page, with pagination.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'string', description: 'Tab identifier' },
+        limit: { type: 'number', description: 'Maximum links to return (default 50)' },
+        offset: { type: 'number', description: 'Offset to start from (default 0)' },
+      },
+      required: ['tabId'],
+    },
+  },
+  {
+    name: 'camofox_images',
+    description:
+      'List the images on a Camoufox page. Optionally inline the image bytes (base64) up to a byte cap.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'string', description: 'Tab identifier' },
+        limit: { type: 'number', description: 'Maximum images to return (default 8, max 20)' },
+        includeData: { type: 'boolean', description: 'Inline base64 image bytes (default false)' },
+        maxBytes: { type: 'number', description: 'Per-image byte cap when includeData is true' },
+      },
+      required: ['tabId'],
+    },
+  },
+  {
     name: 'camofox_import_cookies',
     description:
       'Import cookies into the current Camoufox session (Netscape cookie file). Use to authenticate to sites like LinkedIn without interactive login. Requires CAMOFOX_API_KEY on the REST server.',
@@ -604,6 +728,35 @@ export function buildRequest(name, args, ctx) {
         responseKind: 'json',
         body: { origins: args.origins },
       };
+    case 'camofox_back':
+      return { method: 'POST', path: `/tabs/${args.tabId}/back`, auth: 'accessKey', responseKind: 'json', body: { userId } };
+    case 'camofox_forward':
+      return { method: 'POST', path: `/tabs/${args.tabId}/forward`, auth: 'accessKey', responseKind: 'json', body: { userId } };
+    case 'camofox_refresh':
+      return { method: 'POST', path: `/tabs/${args.tabId}/refresh`, auth: 'accessKey', responseKind: 'json', body: { userId } };
+    case 'camofox_press':
+      return { method: 'POST', path: `/tabs/${args.tabId}/press`, auth: 'accessKey', responseKind: 'json', body: { userId, key: args.key } };
+    case 'camofox_select':
+      return { method: 'POST', path: `/tabs/${args.tabId}/select`, auth: 'accessKey', responseKind: 'json', body: { ...without(args), userId } };
+    case 'camofox_viewport':
+      return { method: 'POST', path: `/tabs/${args.tabId}/viewport`, auth: 'accessKey', responseKind: 'json', body: { userId, width: args.width, height: args.height } };
+    case 'camofox_wait':
+      return { method: 'POST', path: `/tabs/${args.tabId}/wait`, auth: 'accessKey', responseKind: 'json', body: { ...without(args), userId } };
+    case 'camofox_extract':
+      return { method: 'POST', path: `/tabs/${args.tabId}/extract`, auth: 'accessKey', responseKind: 'json', body: { userId, schema: args.schema } };
+    case 'camofox_links': {
+      const params = new URLSearchParams({ userId });
+      if (args.limit != null && args.limit !== '') params.set('limit', String(args.limit));
+      if (args.offset != null && args.offset !== '') params.set('offset', String(args.offset));
+      return { method: 'GET', path: `/tabs/${args.tabId}/links?${params}`, auth: 'accessKey', responseKind: 'json' };
+    }
+    case 'camofox_images': {
+      const params = new URLSearchParams({ userId });
+      if (args.limit != null && args.limit !== '') params.set('limit', String(args.limit));
+      if (args.includeData === true || args.includeData === 'true') params.set('includeData', 'true');
+      if (args.maxBytes != null && args.maxBytes !== '') params.set('maxBytes', String(args.maxBytes));
+      return { method: 'GET', path: `/tabs/${args.tabId}/images?${params}`, auth: 'accessKey', responseKind: 'json' };
+    }
     case 'camofox_list_tabs':
       return {
         method: 'GET',

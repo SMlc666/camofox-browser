@@ -136,6 +136,16 @@
       "camofox_init_script",
       "camofox_export_storage_state",
       "camofox_import_local_storage",
+      "camofox_back",
+      "camofox_forward",
+      "camofox_refresh",
+      "camofox_press",
+      "camofox_select",
+      "camofox_viewport",
+      "camofox_wait",
+      "camofox_extract",
+      "camofox_links",
+      "camofox_images",
       "camofox_import_cookies"
     ]
   }
