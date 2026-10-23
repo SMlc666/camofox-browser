@@ -903,6 +903,83 @@
         }
       }
     },
+    "/tabs/{tabId}/tables/{tableId}/rows": {
+      "get": {
+        "tags": [
+          "Content"
+        ],
+        "summary": "Read paginated rows of an advertised table",
+        "description": "Returns a row-paginated, read-only view of a single table. tableId must be one advertised by the current snapshot's structure (table.id or the positional table-N fallback). Rowspan/colspan are expanded so each row aligns with the header fields. Tables containing credential/secret/token/api-key inputs are not returned.",
+        "parameters": [
+          {
+            "name": "tabId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tableId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Row offset to start from (default 0)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A bounded page of rendered table rows.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing userId or invalid offset.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Tab or advertised table not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/tabs/{tabId}/wait": {
       "post": {
         "tags": [

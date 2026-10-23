@@ -15,7 +15,7 @@ import { createFlyHelpers } from './lib/fly.js';
 import { createPluginEvents, loadPlugins, typeEventPayload } from './lib/plugins.js';
 import { requireAuth, accessKeyMiddleware, timingSafeCompare as _timingSafeCompare, isLoopbackAddress as _isLoopbackAddress } from './lib/auth.js';
 import { windowSnapshot } from './lib/snapshot.js';
-import { extractPageStructure, attachStructureRefs } from './lib/page-structure.js';
+import { extractPageStructure, extractTableRows, attachStructureRefs } from './lib/page-structure.js';
 import {
   MAX_DOWNLOAD_INLINE_BYTES,
   clearTabDownloads,
@@ -4095,6 +4095,82 @@ app.get('/tabs/:tabId/actionables', async (req, res) => {
     res.json(result);
   } catch (err) {
     log('error', 'actionables failed', { reqId: req.reqId, tabId: req.params.tabId, error: err.message });
+    handleRouteError(err, req, res);
+  }
+});
+
+/**
+ * @openapi
+ * /tabs/{tabId}/tables/{tableId}/rows:
+ *   get:
+ *     tags: [Content]
+ *     summary: Read paginated rows of an advertised table
+ *     description: Returns a row-paginated, read-only view of a single table. tableId must be one advertised by the current snapshot's structure (table.id or the positional table-N fallback). Rowspan/colspan are expanded so each row aligns with the header fields. Tables containing credential/secret/token/api-key inputs are not returned.
+ *     parameters:
+ *       - name: tabId
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - name: tableId
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - name: userId
+ *         in: query
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - name: offset
+ *         in: query
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Row offset to start from (default 0).
+ *     responses:
+ *       200:
+ *         description: A bounded page of rendered table rows.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *       400:
+ *         description: Missing userId or invalid offset.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Tab or advertised table not found.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+app.get('/tabs/:tabId/tables/:tableId/rows', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const offset = Number.parseInt(req.query.offset, 10);
+    if (req.query.offset !== undefined && (!Number.isInteger(offset) || offset < 0)) {
+      return res.status(400).json({ error: 'offset must be a non-negative integer' });
+    }
+    const session = sessions.get(normalizeUserId(userId));
+    const found = session && findTab(session, req.params.tabId);
+    if (!found) return tabNotFoundResponse(res, req.params.tabId);
+    session.lastAccess = Date.now();
+
+    const table = await withUserLimit(userId, () => withTabLock(req.params.tabId, () => extractTableRows(
+      found.tabState.page,
+      req.params.tableId,
+      offset || 0,
+    ), HANDLER_TIMEOUT_MS, () => destroyTimedOutTab(session, req.params.tabId, 'operation_timeout', userId)));
+    if (!table) return res.status(404).json({ error: 'Rendered table not found or unavailable' });
+    res.json({ url: found.tabState.page.url(), ...table });
+  } catch (err) {
+    log('error', 'table rows failed', { reqId: req.reqId, tabId: req.params.tabId, error: err.message });
     handleRouteError(err, req, res);
   }
 });
