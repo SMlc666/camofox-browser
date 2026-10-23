@@ -833,6 +833,76 @@
         }
       }
     },
+    "/tabs/{tabId}/actionables": {
+      "get": {
+        "tags": [
+          "Content"
+        ],
+        "summary": "List actionable elements and text inputs",
+        "description": "Discovery metadata for the current page. Returns visible link/button/combobox candidates (each paired with its ref) and visible text inputs (each with a stable targetId plus visibility and sensitivity signals). This is candidate discovery only — the selected ref is re-resolved in the interaction route before acting.",
+        "parameters": [
+          {
+            "name": "tabId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Maximum number of actionable candidates to return (default 100)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Actionable candidates and text inputs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing userId.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Tab not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/tabs/{tabId}/wait": {
       "post": {
         "tags": [

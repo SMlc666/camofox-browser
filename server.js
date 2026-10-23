@@ -2654,6 +2654,215 @@ function refToLocator(page, ref, refs) {
   return locator;
 }
 
+function actionableName(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+// Candidate discovery for the /actionables route. Returns visible link/button/
+// combobox elements paired with their current refs. This is discovery
+// metadata only -- the selected ref is re-resolved in the interaction route,
+// so this single document pass cannot authorize a stale click.
+async function actionablesForRefs(page, refs, { limit = 200 } = {}) {
+  const actionableRoles = new Set(['link', 'button', 'combobox']);
+  const refsByRoleAndName = new Map();
+  for (const [ref, info] of refs) {
+    if (info.frameName || info.frameUrl || !actionableRoles.has(info.role)) continue;
+    const key = `${info.role}:${actionableName(info.name)}`;
+    const matches = refsByRoleAndName.get(key) || [];
+    matches.push({ ref, label: info.name });
+    refsByRoleAndName.set(key, matches);
+  }
+
+  const elements = await page.locator('a, button, [role="link"], [role="button"], [role="combobox"]').evaluateAll((nodes) => nodes.map((element) => {
+    const tag = element.tagName.toLowerCase();
+    const explicitRole = element.getAttribute('role')?.toLowerCase();
+    const role = explicitRole === 'link' || explicitRole === 'button' || explicitRole === 'combobox'
+      ? explicitRole
+      : tag === 'a' ? 'link' : tag === 'button' ? 'button' : '';
+    if (!role) return null;
+
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    const visible = rect.width > 0 && rect.height > 0
+      && rect.bottom > 0 && rect.right > 0
+      && rect.top < window.innerHeight && rect.left < window.innerWidth
+      && style.visibility !== 'hidden' && style.display !== 'none';
+    if (!visible) return null;
+
+    const labelledBy = (element.getAttribute('aria-labelledby') || '').split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent || '')
+      .join(' ');
+    const label = element.getAttribute('aria-label')
+      || labelledBy
+      || element.innerText
+      || element.getAttribute('title')
+      || element.querySelector('img[alt]')?.getAttribute('alt')
+      || element.textContent
+      || '';
+    const anchor = element instanceof HTMLAnchorElement ? element : null;
+    return {
+      role,
+      label: label.replace(/\s+/g, ' ').trim(),
+      tag,
+      href: anchor?.href || '',
+      disabled: element.matches(':disabled,[aria-disabled="true"]'),
+      inForm: Boolean(element.closest('form')),
+      download: Boolean(anchor?.hasAttribute('download')),
+    };
+  })).catch(() => []);
+
+  const actionables = [];
+  const matchedRefs = new Set();
+  for (const element of elements) {
+    if (!element || actionables.length >= limit) continue;
+    const matches = refsByRoleAndName.get(`${element.role}:${actionableName(element.label)}`);
+    if (!matches?.length) continue;
+    // Consume in document order so repeated accessible names retain the
+    // role/name/nth mapping used during live revalidation.
+    const { ref, label } = matches.shift();
+    matchedRefs.add(ref);
+    actionables.push({ ref, label, role: element.role, tag: element.tag, href: element.href, disabled: element.disabled, inForm: element.inForm, download: element.download, visible: true });
+  }
+
+  // Some dynamic pages expose an AX link name that differs from its DOM text
+  // (Google result cards are one example). Preserve the fast one-pass matching
+  // above, but when it produced too few candidates, resolve only unmatched AX
+  // refs individually. The same fallback runs again immediately before an
+  // interaction, so this remains discovery metadata rather than authorization.
+  if (actionables.length < 8) {
+    for (const [ref, info] of refs) {
+      if (actionables.length >= limit || matchedRefs.has(ref) || info.frameName || info.frameUrl || !actionableRoles.has(info.role)) continue;
+      try {
+        const metadata = await refToLocator(page, ref, refs).evaluate((element) => {
+          const tag = element.tagName.toLowerCase();
+          const rect = element.getBoundingClientRect();
+          const style = window.getComputedStyle(element);
+          if (!(rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth) || style.visibility === 'hidden' || style.display === 'none') return null;
+          const anchor = element instanceof HTMLAnchorElement ? element : null;
+          return { tag, href: anchor?.href || '', disabled: element.matches(':disabled,[aria-disabled="true"]'), inForm: Boolean(element.closest('form')), download: Boolean(anchor?.hasAttribute('download')) };
+        }, undefined, { timeout: 1_000 });
+        if (!metadata) continue;
+        matchedRefs.add(ref);
+        actionables.push({ ref, label: info.name, role: info.role, ...metadata, visible: true });
+      } catch {
+        // This specific ref disappeared or changed while the fallback ran.
+      }
+    }
+  }
+  return actionables;
+}
+
+// Text-input discovery for the /actionables route. Emits a stable per-element
+// targetId (hash of a document-scoped opaque identity token) so a caller can
+// tell whether an input field is the same element across snapshots, plus
+// bounded visibility/sensitivity metadata. Main-document only.
+async function inputsForRefs(page, refs, { limit = 100 } = {}) {
+  const inputs = [];
+  for (const [ref, info] of refs) {
+    if (inputs.length >= limit) break;
+    // Input metadata only covers the main document. Frame-local metadata must not leave the browser process.
+    if (info.frameName || info.frameUrl || !['textbox', 'searchbox', 'combobox'].includes(info.role)) continue;
+    const locator = refToLocator(page, ref, refs);
+    try {
+      const input = await locator.evaluate((element) => {
+        const tag = element.tagName.toLowerCase();
+        const nativeInput = element instanceof HTMLInputElement;
+        const textarea = element instanceof HTMLTextAreaElement;
+        const contentEditable = element.isContentEditable;
+        const inputType = nativeInput ? element.type.toLowerCase()
+          : textarea ? 'textarea'
+            : contentEditable ? 'contenteditable'
+              : null;
+        if (!((nativeInput && ['text', 'search'].includes(inputType)) || textarea || contentEditable)) return null;
+
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        const visible = rect.width > 0 && rect.height > 0
+          && rect.bottom > 0 && rect.right > 0
+          && rect.top < window.innerHeight && rect.left < window.innerWidth
+          && style.visibility !== 'hidden' && style.display !== 'none';
+        const enabled = !element.matches(':disabled,[aria-disabled="true"]');
+        const readOnly = Boolean(element.readOnly || element.getAttribute('aria-readonly') === 'true');
+        const form = element.closest('form');
+        const sensitiveSignals = { credentials: false, payment: false, oneTimeCode: false };
+        if (form) {
+          for (const control of form.elements) {
+            const type = (control.type || '').toLowerCase();
+            const autocomplete = (control.autocomplete || '').toLowerCase();
+            const hint = `${control.name || ''} ${control.id || ''} ${control.getAttribute('aria-label') || ''}`.toLowerCase();
+            sensitiveSignals.credentials ||= type === 'password' || /(?:^|\s)(?:username|current-password|new-password)(?:\s|$)/.test(autocomplete) || /password|passcode|username|login/.test(hint);
+            sensitiveSignals.payment ||= /(?:^|\s)(?:cc-|transaction-amount)(?:\s|$)/.test(autocomplete) || /card|credit|debit|cvv|cvc|iban/.test(hint);
+            sensitiveSignals.oneTimeCode ||= /(?:^|\s)one-time-code(?:\s|$)/.test(autocomplete) || /\b(?:otp|one.?time|verification.?code)\b/.test(hint);
+          }
+        }
+        // Keep a document-scoped opaque token for this exact Element object.
+        // Accessibility names and DOM layout routinely change while a public
+        // control remains the same element, so neither is an identity source.
+        // A replacement node gets a new WeakMap entry; navigation creates a
+        // new Document and therefore a new registry.
+        const registryKey = Symbol.for('camofox-browser.input-identity-v1');
+        let registry = document[registryKey];
+        if (!registry || !(registry.elements instanceof WeakMap) || !(registry.inputListeners instanceof WeakSet)) {
+          const nonce = Array.from(crypto.getRandomValues(new Uint32Array(4)), (part) => part.toString(36)).join('-');
+          registry = {
+            nonce,
+            next: 0,
+            elements: new WeakMap(),
+            inputListeners: new WeakSet(),
+            pendingInputToken: null,
+          };
+          Object.defineProperty(document, registryKey, { value: registry });
+        }
+        let identityToken = registry.elements.get(element);
+        // Some SPA frameworks replace a focused editable element immediately
+        // after its input event. Preserve its opaque control lineage only for
+        // the newly focused replacement produced by that input event. This is
+        // browser state, not a label-, selector-, or site-specific rule.
+        if (!identityToken && registry.pendingInputToken && document.activeElement === element) {
+          identityToken = registry.pendingInputToken;
+          registry.pendingInputToken = null;
+          registry.elements.set(element, identityToken);
+        }
+        if (!identityToken) {
+          identityToken = `${registry.nonce}:${++registry.next}`;
+          registry.elements.set(element, identityToken);
+        } else if (registry.pendingInputToken === identityToken) {
+          registry.pendingInputToken = null;
+        }
+        if (!registry.inputListeners.has(element)) {
+          registry.inputListeners.add(element);
+          element.addEventListener('input', () => {
+            registry.pendingInputToken = registry.elements.get(element) || null;
+          }, { once: true });
+        }
+        return {
+          tag,
+          identityToken,
+          inputType,
+          autocomplete: element.getAttribute('autocomplete') || null,
+          state: { visible, enabled, readOnly, editable: visible && enabled && !readOnly },
+          form: {
+            present: Boolean(form),
+            method: form ? form.method.toLowerCase() : null,
+            target: form ? ((!form.target || form.target.toLowerCase() === '_self') ? 'self' : 'other') : null,
+            sensitiveSignals,
+          },
+        };
+      }, undefined, { timeout: 1_000 });
+      if (input?.state.visible) {
+        const { identityToken, ...metadata } = input;
+        const targetId = crypto.createHash('sha256')
+          .update(identityToken)
+          .digest('base64url');
+        inputs.push({ ref, targetId, label: info.name, role: info.role, ...metadata });
+      }
+    } catch {
+      // The page can change between the AX snapshot and this bounded inspection.
+    }
+  }
+  return inputs;
+}
+
 async function refreshTabRefs(tabState, options = {}) {
   const {
     reason = 'refresh',
@@ -3813,6 +4022,79 @@ app.get('/tabs/:tabId/ax', async (req, res) => {
     res.json(result);
   } catch (err) {
     log('error', 'ax failed', { reqId: req.reqId, tabId: req.params.tabId, error: err.message });
+    handleRouteError(err, req, res);
+  }
+});
+
+/**
+ * @openapi
+ * /tabs/{tabId}/actionables:
+ *   get:
+ *     tags: [Content]
+ *     summary: List actionable elements and text inputs
+ *     description: Discovery metadata for the current page. Returns visible link/button/combobox candidates (each paired with its ref) and visible text inputs (each with a stable targetId plus visibility and sensitivity signals). This is candidate discovery only — the selected ref is re-resolved in the interaction route before acting.
+ *     parameters:
+ *       - name: tabId
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - name: userId
+ *         in: query
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - name: limit
+ *         in: query
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 200
+ *         description: Maximum number of actionable candidates to return (default 100).
+ *     responses:
+ *       200:
+ *         description: Actionable candidates and text inputs.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *       400:
+ *         description: Missing userId.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Tab not found.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+app.get('/tabs/:tabId/actionables', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 200) : 100;
+    const session = sessions.get(normalizeUserId(userId));
+    const found = session && findTab(session, req.params.tabId);
+    if (!found) return tabNotFoundResponse(res, req.params.tabId);
+    session.lastAccess = Date.now();
+
+    const result = await withUserLimit(userId, () => withTabLock(req.params.tabId, async () => {
+      const { tabState } = found;
+      tabState.toolCalls++; tabState.consecutiveTimeouts = 0; tabState.consecutiveFailures = 0;
+      return {
+        url: tabState.page.url(),
+        actionables: await actionablesForRefs(tabState.page, tabState.refs, { limit }),
+        inputs: await inputsForRefs(tabState.page, tabState.refs),
+      };
+    }, HANDLER_TIMEOUT_MS, () => destroyTimedOutTab(session, req.params.tabId, 'operation_timeout', userId)));
+    res.json(result);
+  } catch (err) {
+    log('error', 'actionables failed', { reqId: req.reqId, tabId: req.params.tabId, error: err.message });
     handleRouteError(err, req, res);
   }
 });
