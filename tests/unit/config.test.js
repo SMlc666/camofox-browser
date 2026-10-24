@@ -82,6 +82,15 @@ describe('loadConfig', () => {
     expect(config.serverEnv.CAMOFOX_UPLOADS_DIR).toBe('/mounted/uploads');
   });
 
+  test('configures and forwards the persistent profile directory to server subprocesses', () => {
+    process.env.CAMOFOX_PROFILE_DIR = '/mounted/camofox-profiles';
+
+    const config = loadConfig();
+
+    expect(config.profileDir).toBe('/mounted/camofox-profiles');
+    expect(config.serverEnv.CAMOFOX_PROFILE_DIR).toBe('/mounted/camofox-profiles');
+  });
+
   test('configures and forwards the evaluate body size limit', () => {
     delete process.env.CAMOFOX_EVALUATE_MAX_BODY_SIZE;
     expect(loadConfig().evaluateMaxBodySize).toBe('1mb');

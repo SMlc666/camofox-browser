@@ -47,6 +47,7 @@ import { selectOption } from './lib/select-option.js';
 import { visibleSelectorCandidate } from './lib/visible-selector.js';
 import { normalizeBrowserKey } from './lib/browser-key.js';
 import { createPageWithSessionRecovery } from './lib/new-page-recovery.js';
+import { createInitializedContext } from './lib/session-context.js';
 import { resolveUploadPaths } from './lib/upload-paths.js';
 import { acquirePageLease, hasActivePageLeases, isPageLeased, releasePageLease, setLeasedPage } from './lib/page-lease.js';
 import { createReporter, createTabHealthTracker, collectResourceSnapshot, classifyProxyError, browserProcessTreeRssMb, browserProcessNameRssMb } from './lib/reporter.js';
@@ -105,6 +106,7 @@ reporter.startWatchdog(30_000, () => {
 
 // --- Plugin event bus ---
 const pluginEvents = createPluginEvents();
+const sessionContextInitializers = new Map();
 
 // --- Shared auth middleware ---
 const authMiddleware = () => requireAuth(CONFIG);
@@ -1408,7 +1410,12 @@ async function getSession(userId, { trace = false } = {}) {
         log('info', 'session proxy assigned', { userId: key, proxy: sessionProxy.server });
       }
       await pluginEvents.emitAsync('session:creating', { userId: key, contextOptions });
-      const context = await b.newContext(contextOptions);
+      const context = await createInitializedContext({
+        browser: b,
+        userId: key,
+        contextOptions,
+        initializers: sessionContextInitializers.values(),
+      });
 
       let tracePath = null;
       if (trace) {
@@ -7181,6 +7188,15 @@ const pluginCtx = {
   failuresTotal,
   metricsRegistry: getRegister,
   createMetric,
+  registerSessionContextInitializer: (pluginName, initialize) => {
+    if (typeof pluginName !== 'string' || !pluginName || typeof initialize !== 'function') {
+      throw new Error('registerSessionContextInitializer requires a plugin name and initializer function');
+    }
+    if (sessionContextInitializers.has(pluginName)) {
+      throw new Error(`session context initializer already registered by plugin ${pluginName}`);
+    }
+    sessionContextInitializers.set(pluginName, initialize);
+  },
   registerVirtualDisplayProvider: (pluginName, factory) => virtualDisplayRegistry.register(pluginName, factory),
   /** The upstream VirtualDisplay class -- plugins can subclass it. */
   VirtualDisplay,
