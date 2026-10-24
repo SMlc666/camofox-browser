@@ -205,10 +205,12 @@ Element refs are unambiguous and preferred over CSS selectors — a selector tha
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `CAMOFOX_BASE_URL` | `http://localhost:9377` | REST server URL |
-| `CAMOFOX_USER_ID` | `mcp-<random>` | Session isolation (one MCP server = one camofox session) |
-| `CAMOFOX_SESSION_KEY` | `default` | Tab partition within the user |
+| `CAMOFOX_USER_ID` | Persisted per MCP installation | Browser identity / cookie-storage partition (one configured userId per logical user) |
+| `CAMOFOX_SESSION_KEY` | Random per MCP process | Tab partition within the user; changing this does not change the browser identity |
 | `CAMOFOX_ACCESS_KEY` | _(unset)_ | Global bearer token gating the REST server (superkey). If set, forwarded as `Authorization: Bearer <key>` on **every** tool call automatically — must match the REST server's own `CAMOFOX_ACCESS_KEY`. Without this, a globally-authenticated REST server rejects all tool calls except cookie import. |
 | `CAMOFOX_API_KEY` | _(unset)_ | Self-chosen secret gating cookie import. Optional on localhost; required on remote/production and must match the REST server's `CAMOFOX_API_KEY`. Only affects `camofox_import_cookies`. |
+
+The fallback `userId` is stored at `~/.camofox/mcp-identities/<install-hash>.json` with private permissions, so reconnecting or restarting the same MCP installation keeps the same browser identity. MCP sessions launched from that same installation therefore share the same user profile, while a random per-process `sessionKey` keeps their tabs partitioned. Set `CAMOFOX_USER_ID` explicitly to keep an identity stable if the package install path changes, or to assign distinct identities to separate logical users. In containers, persist the home directory or set `CAMOFOX_USER_ID` explicitly.
 
 ## Troubleshooting
 

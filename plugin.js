@@ -6,9 +6,9 @@
  */
 import { dirname } from "path";
 import { fileURLToPath } from "url";
-import { randomUUID } from "crypto";
 import { loadConfig } from "./lib/config.js";
 import { launchServer } from "./lib/launcher.js";
+import { resolvePersistentMcpUserId } from "./mcp/lib/user-id.mjs";
 // Shared tool contracts — the single source of truth also used by mcp/server.mjs.
 // OpenClaw and MCP expose identical tool schemas, REST routes, auth, and response
 // shaping, so they cannot drift.
@@ -100,7 +100,16 @@ export default function register(api) {
     const baseUrl = cfg.url || `http://localhost:${port}`;
     const autoStart = cfg.autoStart !== false; // default true
     const pluginDir = getPluginDir();
-    const fallbackUserId = `camofox-${randomUUID()}`;
+    let fallbackUserIdPromise;
+    const getFallbackUserId = () => {
+        if (!fallbackUserIdPromise) {
+            fallbackUserIdPromise = resolvePersistentMcpUserId({
+                instanceKey: pluginDir,
+                prefix: "camofox",
+            });
+        }
+        return fallbackUserIdPromise;
+    };
     // Auto-start server if configured (default: true)
     if (autoStart) {
         (async () => {
@@ -130,7 +139,7 @@ export default function register(api) {
             description: def.description,
             parameters: def.inputSchema,
             async execute(_id, params) {
-                const userId = ctx.agentId || fallbackUserId;
+                const userId = process.env.CAMOFOX_USER_ID || ctx.agentId || await getFallbackUserId();
                 const cfg = loadConfig();
                 const { spec, payload } = await runTool(def.name, params, { userId, sessionKey: ctx.sessionKey }, baseUrl, cfg);
                 return { content: adaptResponse(spec, payload), details: {} };
