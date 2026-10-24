@@ -272,6 +272,30 @@ Override the directory with `CAMOFOX_PROFILE_DIR` or set `"profileDir"` in the p
 
 By default, storage state contains cookies and localStorage only. To also persist IndexedDB, set `"indexedDB": true` in the persistence plugin config. This captures all serializable IndexedDB records—not only authentication data—and may make snapshots significantly larger and checkpoints slower.
 
+### Persistent per-user browser fingerprints
+
+This feature is **disabled by default**. Opt in by setting `"fingerprint": { "enabled": true }` under `plugins` in `camofox.config.json`, then restart the server. To disable it, set `enabled` back to `false` and restart; saved fingerprint files are retained, but the disabled plugin does not apply them. Cookie/localStorage/optional IndexedDB persistence is controlled separately by the `persistence` plugin.
+
+The `fingerprint` plugin keeps a stable Camoufox-native identity for each `userId`, independently of `sessionKey`, while continuing to share the browser process. It saves its global Camoufox launch baseline and per-user identity under `~/.camofox/profiles/.fingerprints/` (or `CAMOFOX_PROFILE_DIR`) and restores them when a context is recreated or the server restarts. Existing storage-state files are kept separate and are not rewritten by fingerprint initialization; resetting a user's storage state does not reset their fingerprint. The standalone MCP adapter and the OpenClaw plugin's fallback also persist a generated `userId` per installation under `~/.camofox/mcp-identities/`, so restarting/reconnecting does not silently select a new identity. OpenClaw uses its stable `ctx.agentId` when available; `CAMOFOX_USER_ID` explicitly overrides the adapter's automatic choice. Separate logical users or moved installs should set a stable `CAMOFOX_USER_ID`; MCP processes using the same install and ID share that user's profile, while `sessionKey` only partitions tabs.
+
+The adapter is validated against the repository's Camoufox `152.0.4-beta.30` build and `camoufox-js@0.11.5` on Android 13/AArch64 under Ubuntu proot and Xvfb. That Node wrapper does not export the Python-style `NewContext` or `generateContextFingerprint` API names; the adapter uses BrowserForge `generateFingerprint`/`fromBrowserforge` and Camoufox's compiled native per-context setters via Playwright's guarded `context.addInitScript()`. At browser startup and for each new BrowserContext, it probes the required setters without invoking their one-shot functions. If the binary lacks a required patch, a profile is corrupt, or the recorded runtime is incompatible, context creation fails explicitly rather than silently inventing a new identity. Fingerprint profile files are atomically created with mode `0600` in directories with mode `0700` and carry schema/runtime metadata plus a SHA-256 integrity check.
+
+The pinned build applies per-context User-Agent (also used for HTTP requests and Workers), platform/OSCPU, hardware concurrency, screen dimensions/color depth, timezone, audio seed, font-spacing seed, and font-list settings through native setters. Locale and `Accept-Language` are applied through Playwright context options. **WebGL is a known limitation of this exact build:** although `setWebGLVendor`/`setWebGLRenderer` are exposed, A/B runtime checks did not show the requested vendor/renderer taking effect independently. The adapter therefore does not call them and instead restores the same persisted browser-global WebGL baseline for every user. Worker language, `navigator.appVersion`, DPR, and the shared outer-window dimensions also remain browser-global. The per-user profiles still vary and persist the supported context signals; this is not complete browser-process isolation.
+
+Canvas needs a specific caveat: this `152.0.4-beta.30` binary does not expose `setCanvasSeed`. The ARM64 runtime test found 2D Canvas text metrics and rendered text pixels differ between users and remain stable for the same user after restart; raw `getImageData` pixels also remain stable across restart. However, PNG `toDataURL()` bytes rotate because Firefox adds a process-session `deBG` chunk. That export metadata cannot be persisted per user through the current native API, and the plugin warns about it; it does not emulate a Canvas setter with JavaScript. Device-pixel ratio, window outer size, browser process/OS/GPU, and network egress also remain shared. This is per-user persistence within one browser process, not complete process/OS/IP isolation; screen signals are constrained by the shared Xvfb window.
+
+The generated per-user files contain a hashed user identifier and fingerprint parameters, not the raw `userId`. Keep the profile directory private and back it up with storage state. Do not remove or edit `.fingerprints` files to recover from a runtime mismatch; treat that as an explicit identity migration.
+
+Run the real-browser persistence check against the pinned ARM64 binary under Xvfb with:
+
+```bash
+CAMOFOX_FINGERPRINT_TEST_EXECUTABLE=/path/to/camoufox-bin \
+CAMOUFOX_INSTALL_DIR=/path/to/camoufox-install \
+xvfb-run -a npm run test:fingerprint-persistence
+```
+
+The check opens two user contexts simultaneously, verifies request headers/Workers/WebGL/screen/Canvas behavior, restores cookie/localStorage/IndexedDB across a clean browser restart, records process-tree RSS, and confirms a corrupted fingerprint file is not replaced.
+
 ### Session Tracing
 
 Capture a Playwright trace of every action in a session: page screenshots, DOM snapshots, network requests, and console output. Output is a single `.zip` file you can open in Playwright's built-in Trace Viewer.

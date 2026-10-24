@@ -163,6 +163,9 @@ docker run -p 9377:9377 camofox-browser
 - `plugins/vnc/vnc-launcher.js` - VNC process management (`child_process` isolated here)
 - `plugins/persistence/index.js` - Session persistence lifecycle hooks
 - `lib/persistence.js` - Atomic storage state read/write
+- `plugins/fingerprint/index.js` - Per-user native Camoufox fingerprint lifecycle hooks
+- `lib/fingerprint-persistence.js` - Secure fingerprint profiles and runtime compatibility checks
+- `mcp/lib/user-id.mjs` - Stable per-install MCP fallback user IDs across client/server reconnects
 - `lib/inflight.js` - Inflight request coalescing
 - `lib/tmp-cleanup.js` - Orphaned temp file cleanup
 - `lib/reporter.js` - Crash/hang reporter with anonymization + GitHub App auth (see README "Crash Reporter" for setup)
@@ -320,6 +323,7 @@ export function register(app, ctx) {
 | `proxyPool` | `object\|null` | Proxy pool instance (null if no proxy configured) |
 | `failuresTotal` | `Counter` | Prometheus counter: `failuresTotal.labels(type, action).inc()` |
 | `createMetric` | `async function` | Create a Prometheus metric registered to the shared registry (see below) |
+| `registerSessionContextInitializer` | `function` | Register an async initializer applied after BrowserContext creation and before the session is exposed |
 | `metricsRegistry` | `function` | `metricsRegistry()` -- raw prom-client Registry or null |
 
 ### Events (29)
@@ -476,10 +480,11 @@ Plugin sources can be:
 
 ### Default Plugins
 
-Three plugins ship by default:
+Four plugins ship by default:
 
 - **youtube** -- YouTube transcript extraction (enabled by default)
 - **persistence** -- Per-user session state persistence to `~/.camofox/profiles/` (enabled by default)
+- **fingerprint** -- Persistent per-user Camoufox-native identity (disabled by default; opt in with `"fingerprint": { "enabled": true }`; requires the pinned patched browser build)
 - **vnc** -- Interactive browser login via noVNC (disabled by default, requires `ENABLE_VNC=1`)
 
 The `youtube` plugin ships as a default plugin -- it's listed in `camofox.config.json` and included in the base Docker image with its deps pre-installed. The base image runs `scripts/install-plugin-deps.sh` which reads the config and installs `apt.txt` packages + `post-install.sh` hooks for listed plugins.
@@ -569,3 +574,4 @@ Key patterns:
 - **Metrics**: `ctx.failuresTotal.labels(...)` for core counters, `ctx.createMetric()` for custom
 - **Code separation**: `child_process` in `youtube.js`, route handler in `index.js` -- separate files
 - **System deps**: `apt.txt` lists packages installed via `scripts/install-plugin-deps.sh`
+- **Persistent identity**: `registerSessionContextInitializer` lets plugins apply per-context native setup before the first page is exposed; never fake browser fingerprints with JS property overrides
