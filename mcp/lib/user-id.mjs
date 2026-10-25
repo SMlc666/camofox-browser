@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { assertPrivateStoragePlatform } from './private-storage.mjs';
 
 const SCHEMA_VERSION = 1;
 const DEFAULT_DIRECTORY = path.join(os.homedir(), '.camofox', 'mcp-identities');
@@ -121,6 +122,7 @@ export async function resolvePersistentMcpUserId({
     if (!userId.trim()) throw new Error('configured MCP userId must not be empty');
     return userId;
   }
+  assertPrivateStoragePlatform();
   if (typeof instanceKey !== 'string' || !instanceKey.trim()) {
     throw new Error('MCP instanceKey is required to persist its fallback userId');
   }

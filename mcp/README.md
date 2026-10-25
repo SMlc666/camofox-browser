@@ -212,6 +212,8 @@ Element refs are unambiguous and preferred over CSS selectors — a selector tha
 
 The fallback `userId` is stored at `~/.camofox/mcp-identities/<install-hash>.json` with private permissions, so reconnecting or restarting the same MCP installation keeps the same browser identity. MCP sessions launched from that same installation therefore share the same user profile, while a random per-process `sessionKey` keeps their tabs partitioned. Set `CAMOFOX_USER_ID` explicitly to keep an identity stable if the package install path changes, or to assign distinct identities to separate logical users. In containers, persist the home directory or set `CAMOFOX_USER_ID` explicitly.
 
+On Windows, automatic fallback-ID file storage is currently unsupported because POSIX `0600`/`0700` mode bits do not validate Windows ACLs. Set `CAMOFOX_USER_ID` explicitly to avoid fallback file storage; do not rely on `chmod` as an ACL security boundary. Native Windows ACL support remains unimplemented.
+
 ## Troubleshooting
 
 - **`503 session_expired` / `tab create timed out`** — the REST server's browser session died (often after a prior failed call destabilized it). Restart `npm start`.

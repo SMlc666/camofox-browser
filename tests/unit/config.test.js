@@ -2,9 +2,19 @@ import { describe, expect, test, afterEach } from '@jest/globals';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { loadConfig } from '../../lib/config.js';
+import { loadConfig, resolveProfileDirectory } from '../../lib/config.js';
 
 const ORIGINAL_ENV = { ...process.env };
+
+test('shared profile resolution uses env > plugin > global consistently', () => {
+  const config = { profileDir: '/global' };
+  const plugin = { profileDir: '/plugin' };
+  process.env.CAMOFOX_PROFILE_DIR = '/environment';
+  expect(resolveProfileDirectory(config, plugin)).toBe('/environment');
+  delete process.env.CAMOFOX_PROFILE_DIR;
+  expect(resolveProfileDirectory(config, plugin)).toBe('/plugin');
+  expect(resolveProfileDirectory(config)).toBe('/global');
+});
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };

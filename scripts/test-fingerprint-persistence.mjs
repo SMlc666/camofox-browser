@@ -18,6 +18,8 @@ import {
   verifyNativeFingerprintSetters,
 } from '../lib/fingerprint-persistence.js';
 import { loadPersistedStorageState, persistStorageState } from '../lib/persistence.js';
+import { verifyAppliedContextFingerprint } from '../lib/fingerprint-verification.js';
+import { createInitializedContext } from '../lib/session-context.js';
 
 const executablePath = process.env.CAMOFOX_FINGERPRINT_TEST_EXECUTABLE;
 if (!executablePath) {
@@ -137,6 +139,7 @@ async function openUserContext({ browser, profileDir, userId, runtime, globalPro
   });
   await verifyContextNativeFingerprintSetters(context);
   await context.addInitScript(buildNativeFingerprintInitScript(profile.identity));
+  await verifyAppliedContextFingerprint(context, profile.identity);
   return { context, profile };
 }
 
@@ -403,6 +406,16 @@ try {
   assert.equal(restoredSignals.localStorageValue, 'local-storage-ok');
   assert.equal(restoredSignals.indexedDbValue, 'indexeddb-ok');
   await restoredA.context.close();
+  const mismatchContext = await restoredBrowser.newContext({ viewport: null, ...contextFingerprintOptions(restoredA.profile.identity) });
+  await mismatchContext.addInitScript(buildNativeFingerprintInitScript(restoredA.profile.identity));
+  await assert.rejects(createInitializedContext({
+    browser: { newContext: async () => mismatchContext },
+    userId: 'verification-negative-test', contextOptions: {},
+    initializers: [({ context }) => verifyAppliedContextFingerprint(context, {
+      ...restoredA.profile.identity, hardwareConcurrency: restoredA.profile.identity.hardwareConcurrency + 100,
+    })],
+  }), /page.hardwareConcurrency/);
+  await assert.rejects(mismatchContext.newPage(), /closed/i, 'failed observable verification must close the Context');
   await restoredBrowser.close();
   restoredBrowser = undefined;
 
@@ -433,6 +446,7 @@ try {
       webglSetterProbe,
     },
     consistency: {
+      observableMismatchRejectsAndClosesContext: true,
       requestHeaders: true,
       workerNavigator: true,
       cookieRestored: true,

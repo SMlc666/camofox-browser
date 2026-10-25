@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { resolveProfileDirectory } from '../../lib/config.js';
+import { verifyAppliedContextFingerprint } from '../../lib/fingerprint-verification.js';
 import {
   assertFingerprintProxyPolicy,
   buildNativeFingerprintInitScript,
@@ -62,7 +64,7 @@ export async function register(_app, ctx, pluginConfig = {}) {
     throw new Error('fingerprint plugin requires core session-context initializer support');
   }
 
-  const profileDir = pluginConfig.profileDir || config.profileDir;
+  const profileDir = resolveProfileDirectory(config, pluginConfig);
   if (!profileDir) throw new Error('fingerprint persistence requires profileDir');
 
   const appManifest = JSON.parse(await fs.readFile(new URL('../../package.json', import.meta.url), 'utf8'));
@@ -154,6 +156,7 @@ export async function register(_app, ctx, pluginConfig = {}) {
     // safe because the native APIs self-remove and the script is guarded.
     await verifyContextNativeFingerprintSetters(context);
     await context.addInitScript(buildNativeFingerprintInitScript(profile.identity));
+    await verifyAppliedContextFingerprint(context, profile.identity);
   });
 
   log('info', 'persistent per-user Camoufox fingerprint plugin enabled', { profileDir });

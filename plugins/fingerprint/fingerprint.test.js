@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { createPluginEvents } from '../../lib/plugins.js';
 import { register } from './index.js';
+import { expectedFingerprintSignals } from '../../lib/fingerprint-verification.js';
 
 const noop = jest.fn();
 
@@ -31,6 +32,25 @@ describe('fingerprint plugin lifecycle', () => {
     expect(events.eventNames()).toEqual([]);
     expect(registerInitializer).not.toHaveBeenCalled();
     expect(await fs.readdir(tempDir)).toEqual([]);
+  });
+
+  test('CAMOFOX_PROFILE_DIR overrides the plugin profile directory, matching storageState precedence', async () => {
+    const previous = process.env.CAMOFOX_PROFILE_DIR;
+    const events = createPluginEvents();
+    const log = jest.fn();
+    try {
+      process.env.CAMOFOX_PROFILE_DIR = path.join(tempDir, 'environment');
+      await register({}, {
+        events, config: { profileDir: path.join(tempDir, 'global') },
+        registerSessionContextInitializer: jest.fn(), log,
+      }, { enabled: true, profileDir: path.join(tempDir, 'plugin') });
+      expect(log).toHaveBeenCalledWith('info', 'persistent per-user Camoufox fingerprint plugin enabled', {
+        profileDir: path.join(tempDir, 'environment'),
+      });
+    } finally {
+      if (previous === undefined) delete process.env.CAMOFOX_PROFILE_DIR;
+      else process.env.CAMOFOX_PROFILE_DIR = previous;
+    }
   });
 
   test.each([
@@ -118,7 +138,16 @@ describe('fingerprint plugin lifecycle', () => {
     expect(contextOptions.viewport).toBeNull();
     expect(initializeContext).toEqual(expect.any(Function));
 
-    const context = { newPage: jest.fn(async () => mockPage), addInitScript: jest.fn() };
+    const userFiles = await fs.readdir(path.join(tempDir, '.fingerprints', 'users'));
+    const stored = JSON.parse(await fs.readFile(path.join(tempDir, '.fingerprints', 'users', userFiles[0]), 'utf8'));
+    const observed = expectedFingerprintSignals(stored.identity);
+    const verificationPage = {
+      on: jest.fn(), goto: jest.fn(), close: jest.fn(),
+      evaluate: jest.fn(async (_fn, names) => Array.isArray(names)
+        ? Object.fromEntries(names.map((name) => [name, 'function']))
+        : { ...observed, worker: observed, screenCss: [true, true] }),
+    };
+    const context = { addInitScript: jest.fn(), newPage: jest.fn(async () => verificationPage) };
     await initializeContext({ userId: 'stable-user', context });
     const script = context.addInitScript.mock.calls[0][0];
     expect(script).toContain('setNavigatorHardwareConcurrency');

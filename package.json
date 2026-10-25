@@ -47,6 +47,7 @@
     "mcp/lib/cookies.mjs",
     "mcp/lib/tool-contracts.mjs",
     "mcp/lib/user-id.mjs",
+    "mcp/lib/private-storage.mjs",
     "plugins/persistence/index.js",
     "plugins/fingerprint/index.js",
     "plugins/vnc/index.js",
