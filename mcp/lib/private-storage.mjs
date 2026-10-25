@@ -5,7 +5,7 @@
  */
 export function assertPrivateStoragePlatform(platform = process.platform) {
   if (platform === 'win32') {
-    throw new Error('private identity storage on Windows requires Windows ACL validation, which is not implemented; keep the fingerprint plugin disabled and set CAMOFOX_USER_ID explicitly for MCP (no fallback identity file)');
+    throw new Error('private identity storage on Windows requires Windows ACL validation, which is not implemented; keep the fingerprint plugin disabled; MCP can use its file-free Windows fallback or an explicit CAMOFOX_USER_ID');
   }
   if (!['linux', 'darwin', 'freebsd', 'openbsd', 'netbsd', 'aix', 'sunos'].includes(platform)) {
     throw new Error(`private identity storage is unsupported on platform ${platform}`);

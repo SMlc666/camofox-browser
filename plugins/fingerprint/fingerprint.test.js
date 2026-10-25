@@ -19,7 +19,7 @@ describe('fingerprint plugin lifecycle', () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  test('disabled mode registers no hooks or context initializer and writes no profiles', async () => {
+  test.each([{}, { enabled: false }, { enabled: 'true' }, { enabled: 1 }])('non-explicit enablement %j registers no hooks or profiles', async (pluginConfig) => {
     const events = createPluginEvents();
     const registerInitializer = jest.fn();
     await register({}, {
@@ -28,7 +28,7 @@ describe('fingerprint plugin lifecycle', () => {
       proxyPool: { canRotateSessions: true },
       registerSessionContextInitializer: registerInitializer,
       log: noop,
-    }, { enabled: false });
+    }, pluginConfig);
     expect(events.eventNames()).toEqual([]);
     expect(registerInitializer).not.toHaveBeenCalled();
     expect(await fs.readdir(tempDir)).toEqual([]);

@@ -18,14 +18,18 @@ describe('private identity storage platform policy', () => {
     expect(() => assertPrivateStoragePlatform('win32')).toThrow(/Windows ACL validation/);
   });
 
-  test('Windows paths fail before writes, while explicit MCP userId needs no ACL storage', async () => {
+  test('Windows fingerprint storage fails before writes but MCP fallback remains stable without files', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'camofox-platform-test-'));
     const env = {};
     writeCamoufoxConfig(env, { 'navigator.userAgent': 'test' });
     try {
       Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'win32' });
-      await expect(resolvePersistentMcpUserId({ directory, instanceKey: 'C:\\camofox' }))
-        .rejects.toThrow(/Windows ACL validation/);
+      const first = await resolvePersistentMcpUserId({ directory, instanceKey: 'C:\\camofox' });
+      const restarted = await resolvePersistentMcpUserId({ directory, instanceKey: 'c:\\CAMOFOX' });
+      const otherInstall = await resolvePersistentMcpUserId({ directory, instanceKey: 'C:\\other' });
+      expect(first).toMatch(/^mcp-win-[a-f0-9]{32}$/);
+      expect(restarted).toBe(first);
+      expect(otherInstall).not.toBe(first);
       await expect(loadOrCreateBrowserFingerprint({ profileDir: directory, options: { env }, runtime: {} }))
         .rejects.toThrow(/Windows ACL validation/);
       await expect(resolvePersistentMcpUserId({ explicitUserId: 'configured-user', directory }))

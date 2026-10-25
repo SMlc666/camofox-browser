@@ -59,7 +59,7 @@ async function browserVersionForExecutable(executablePath) {
 
 export async function register(_app, ctx, pluginConfig = {}) {
   const { events, config, log, registerSessionContextInitializer } = ctx;
-  if (pluginConfig.enabled === false) return;
+  if (pluginConfig.enabled !== true) return;
   if (typeof registerSessionContextInitializer !== 'function') {
     throw new Error('fingerprint plugin requires core session-context initializer support');
   }

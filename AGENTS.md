@@ -165,7 +165,7 @@ docker run -p 9377:9377 camofox-browser
 - `lib/persistence.js` - Atomic storage state read/write
 - `plugins/fingerprint/index.js` - Per-user native Camoufox fingerprint lifecycle hooks
 - `lib/fingerprint-persistence.js` - Secure fingerprint profiles and runtime compatibility checks
-- `mcp/lib/user-id.mjs` - Stable per-install MCP fallback user IDs across client/server reconnects
+- `mcp/lib/user-id.mjs` - Stable per-install MCP fallback user IDs across client/server reconnects (Windows uses a file-free home/install-derived label; user IDs are profile selectors, not tenant authorization)
 - `lib/inflight.js` - Inflight request coalescing
 - `lib/tmp-cleanup.js` - Orphaned temp file cleanup
 - `lib/reporter.js` - Crash/hang reporter with anonymization + GitHub App auth (see README "Crash Reporter" for setup)
@@ -449,7 +449,7 @@ Both are run by `scripts/install-plugin-deps.sh` during Docker build.
 ```
 
 - **`plugins`** -- array of plugin directory names to load. Only these are loaded at startup and have deps installed during build.
-- If the file is missing or has no `plugins` key, **all** plugins in `plugins/` are loaded (backward-compatible).
+- If the file is missing or has no `plugins` key, plugins in `plugins/` are loaded for backward compatibility **except `fingerprint`**, which always requires an explicit object config with `enabled: true`. An explicitly enabled fingerprint plugin is required: missing/import/registration failures abort startup instead of falling back.
 - This is camofox's own config. `openclaw.plugin.json` is separate -- it tells the OpenClaw Gateway how to configure camofox as an external service.
 
 ### Installing Plugins

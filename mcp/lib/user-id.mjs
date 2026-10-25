@@ -122,10 +122,20 @@ export async function resolvePersistentMcpUserId({
     if (!userId.trim()) throw new Error('configured MCP userId must not be empty');
     return userId;
   }
-  assertPrivateStoragePlatform();
   if (typeof instanceKey !== 'string' || !instanceKey.trim()) {
     throw new Error('MCP instanceKey is required to persist its fallback userId');
   }
+  if (process.platform === 'win32') {
+    // A userId is a public partition label, not a credential. A deterministic
+    // per-home/per-install label preserves Windows startup and reconnects
+    // without claiming chmod validates ACLs or writing an identity file.
+    const scope = JSON.stringify([
+      path.win32.resolve(os.homedir()).toLowerCase(),
+      path.win32.resolve(instanceKey).toLowerCase(),
+    ]);
+    return `${prefix}-win-${crypto.createHash('sha256').update(scope).digest('hex').slice(0, 32)}`;
+  }
+  assertPrivateStoragePlatform();
   const instanceHash = crypto.createHash('sha256').update(path.resolve(instanceKey)).digest('hex');
   await ensureSecureDirectory(directory);
   const filePath = path.join(directory, `${instanceHash}.json`);
