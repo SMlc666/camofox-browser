@@ -130,6 +130,7 @@ npm test                          # All tests (unit + e2e + plugin)
 npm run test:plugins              # All plugin tests
 npm run test:e2e                  # E2E tests
 npm run test:live                 # Live Google tests
+npm run test:fingerprint-service  # Opt-in Linux/Xvfb real REST + two MCP processes; requires CAMOFOX_FINGERPRINT_TEST_EXECUTABLE
 npm run test:debug                # With server output
 npx jest plugins/youtube          # Single plugin's tests
 ```
@@ -163,6 +164,9 @@ docker run -p 9377:9377 camofox-browser
 - `plugins/vnc/vnc-launcher.js` - VNC process management (`child_process` isolated here)
 - `plugins/persistence/index.js` - Session persistence lifecycle hooks
 - `lib/persistence.js` - Atomic storage state read/write
+- `plugins/fingerprint/index.js` - Per-user native Camoufox fingerprint lifecycle hooks
+- `lib/fingerprint-persistence.js` - Secure fingerprint profiles, external initialization anchors (`.fingerprint-registry/`) and runtime compatibility checks; missing records or preexisting unbound storageState fail closed
+- `mcp/lib/user-id.mjs` - Stable per-install MCP fallback user IDs across client/server reconnects (Windows uses a file-free home/install-derived label; user IDs are profile selectors, not tenant authorization)
 - `lib/inflight.js` - Inflight request coalescing
 - `lib/tmp-cleanup.js` - Orphaned temp file cleanup
 - `lib/reporter.js` - Crash/hang reporter with anonymization + GitHub App auth (see README "Crash Reporter" for setup)
@@ -320,6 +324,7 @@ export function register(app, ctx) {
 | `proxyPool` | `object\|null` | Proxy pool instance (null if no proxy configured) |
 | `failuresTotal` | `Counter` | Prometheus counter: `failuresTotal.labels(type, action).inc()` |
 | `createMetric` | `async function` | Create a Prometheus metric registered to the shared registry (see below) |
+| `registerSessionContextInitializer` | `function` | `(name, initialize, prepare?)`: optional `prepare({userId, contextOptions})` runs after all async session:creating hooks but before BrowserContext creation; `initialize({userId, context, contextOptions})` runs before session exposure. Failure rejects creation and closes any created Context |
 | `metricsRegistry` | `function` | `metricsRegistry()` -- raw prom-client Registry or null |
 
 ### Events (29)
@@ -445,7 +450,7 @@ Both are run by `scripts/install-plugin-deps.sh` during Docker build.
 ```
 
 - **`plugins`** -- array of plugin directory names to load. Only these are loaded at startup and have deps installed during build.
-- If the file is missing or has no `plugins` key, **all** plugins in `plugins/` are loaded (backward-compatible).
+- If the file is missing or has no `plugins` key, plugins in `plugins/` are loaded for backward compatibility **except `fingerprint`**, which always requires an explicit object config with `enabled: true`. An explicitly enabled fingerprint plugin is required: missing/import/registration failures abort startup instead of falling back.
 - This is camofox's own config. `openclaw.plugin.json` is separate -- it tells the OpenClaw Gateway how to configure camofox as an external service.
 
 ### Installing Plugins
@@ -476,10 +481,11 @@ Plugin sources can be:
 
 ### Default Plugins
 
-Three plugins ship by default:
+Four plugins ship by default:
 
 - **youtube** -- YouTube transcript extraction (enabled by default)
 - **persistence** -- Per-user session state persistence to `~/.camofox/profiles/` (enabled by default)
+- **fingerprint** -- Persistent per-user Camoufox-native identity (disabled by default; opt in with `"fingerprint": { "enabled": true }`; requires the pinned patched browser build)
 - **vnc** -- Interactive browser login via noVNC (disabled by default, requires `ENABLE_VNC=1`)
 
 The `youtube` plugin ships as a default plugin -- it's listed in `camofox.config.json` and included in the base Docker image with its deps pre-installed. The base image runs `scripts/install-plugin-deps.sh` which reads the config and installs `apt.txt` packages + `post-install.sh` hooks for listed plugins.
@@ -569,3 +575,4 @@ Key patterns:
 - **Metrics**: `ctx.failuresTotal.labels(...)` for core counters, `ctx.createMetric()` for custom
 - **Code separation**: `child_process` in `youtube.js`, route handler in `index.js` -- separate files
 - **System deps**: `apt.txt` lists packages installed via `scripts/install-plugin-deps.sh`
+- **Persistent identity**: `registerSessionContextInitializer` lets plugins apply per-context native setup before the first page is exposed; never fake browser fingerprints with JS property overrides

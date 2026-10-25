@@ -2,9 +2,19 @@ import { describe, expect, test, afterEach } from '@jest/globals';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { loadConfig } from '../../lib/config.js';
+import { loadConfig, resolveProfileDirectory } from '../../lib/config.js';
 
 const ORIGINAL_ENV = { ...process.env };
+
+test('shared profile resolution uses env > plugin > global consistently', () => {
+  const config = { profileDir: '/global' };
+  const plugin = { profileDir: '/plugin' };
+  process.env.CAMOFOX_PROFILE_DIR = '/environment';
+  expect(resolveProfileDirectory(config, plugin)).toBe('/environment');
+  delete process.env.CAMOFOX_PROFILE_DIR;
+  expect(resolveProfileDirectory(config, plugin)).toBe('/plugin');
+  expect(resolveProfileDirectory(config)).toBe('/global');
+});
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
@@ -80,6 +90,15 @@ describe('loadConfig', () => {
 
     expect(config.uploadsDir).toBe('/mounted/uploads');
     expect(config.serverEnv.CAMOFOX_UPLOADS_DIR).toBe('/mounted/uploads');
+  });
+
+  test('configures and forwards the persistent profile directory to server subprocesses', () => {
+    process.env.CAMOFOX_PROFILE_DIR = '/mounted/camofox-profiles';
+
+    const config = loadConfig();
+
+    expect(config.profileDir).toBe('/mounted/camofox-profiles');
+    expect(config.serverEnv.CAMOFOX_PROFILE_DIR).toBe('/mounted/camofox-profiles');
   });
 
   test('configures and forwards the evaluate body size limit', () => {

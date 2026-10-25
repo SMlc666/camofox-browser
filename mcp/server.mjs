@@ -29,6 +29,7 @@ import {
   runTool,
   adaptResponse,
 } from "./lib/tool-contracts.mjs";
+import { resolvePersistentMcpUserId } from "./lib/user-id.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -45,11 +46,16 @@ const VERSION = JSON.parse(
 const CONFIG = loadMcpConfig();
 const BASE_URL = process.env.CAMOFOX_BASE_URL || `http://localhost:${CONFIG.port}`;
 
-// Per-MCP-server userId so each host session gets an isolated camofox session
-// (cookie/storage partition). Falls back to a random id.
-const USER_ID = process.env.CAMOFOX_USER_ID || `mcp-${randomUUID()}`;
+// Keep one stable userId per adapter installation across client/server reconnects.
+// Configure CAMOFOX_USER_ID explicitly when several installations should share or
+// isolate a logical user's browser identity independently of the install path.
+const USER_ID = await resolvePersistentMcpUserId({
+  explicitUserId: process.env.CAMOFOX_USER_ID,
+  instanceKey: __dirname,
+  prefix: "mcp",
+});
 // sessionKey partitions tabs within a user (matches plugin.ts fallback "default").
-const SESSION_KEY = process.env.CAMOFOX_SESSION_KEY || "default";
+const SESSION_KEY = process.env.CAMOFOX_SESSION_KEY || `mcp-session-${randomUUID()}`;
 
 // The standalone package declares the SDK directly. Surface a clear,
 // actionable error if an incomplete installation is missing it.

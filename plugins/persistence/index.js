@@ -35,6 +35,7 @@ import {
   persistStorageState,
 } from '../../lib/persistence.js';
 import { importBootstrapCookies } from '../../lib/cookies.js';
+import { resolveProfileDirectory } from '../../lib/config.js';
 
 async function removeIfExists(p) {
   try {
@@ -50,7 +51,7 @@ export async function register(app, ctx, pluginConfig = {}) {
   const { events, config, log } = ctx;
 
   // Resolve profileDir: env var > plugin config > global config default (~/.camofox/profiles)
-  const profileDir = process.env.CAMOFOX_PROFILE_DIR || pluginConfig.profileDir || config.profileDir;
+  const profileDir = resolveProfileDirectory(config, pluginConfig);
   if (!profileDir) {
     log('warn', 'persistence plugin: no profileDir configured, plugin disabled');
     return;
