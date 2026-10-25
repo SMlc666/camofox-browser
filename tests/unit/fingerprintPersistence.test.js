@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -52,6 +53,59 @@ describe('persistent per-user Camoufox fingerprints', () => {
     expect(readCamoufoxConfig(restartedOptions.env)).toEqual(firstConfig);
     const stat = await fs.stat(first.path);
     expect(stat.mode & 0o777).toBe(0o600);
+  });
+
+  test.each(['US', 'JP'])('refuses %s proxy launch options without changing stored identity or incoming GeoIP', async (country) => {
+    const globalProfile = await loadOrCreateBrowserFingerprint({ profileDir, options: makeLaunchOptions(), runtime });
+    const before = await fs.readFile(globalProfile.path);
+    const options = makeLaunchOptions({
+      timezone: country === 'US' ? 'America/New_York' : 'Asia/Tokyo',
+      'locale:language': country === 'US' ? 'en' : 'ja',
+      'locale:region': country,
+      'geolocation:latitude': country === 'US' ? 40.71 : 35.68,
+      'geolocation:longitude': country === 'US' ? -74.01 : 139.69,
+      'webrtc:ipv4': country === 'US' ? '192.0.2.1' : '198.51.100.1',
+    });
+    options.proxy = { server: 'http://proxy.invalid:8080' };
+    const incomingEnv = { ...options.env };
+    await expect(loadOrCreateBrowserFingerprint({ profileDir, options, runtime }))
+      .rejects.toThrow(/direct connections only/);
+    expect(options.env).toEqual(incomingEnv);
+    expect(await fs.readFile(globalProfile.path)).toEqual(before);
+  });
+
+  test.each(['geolocation:latitude', 'geolocation:longitude', 'webrtc:ipv4', 'webrtc:ipv6'])(
+    'refuses network-bound launch config %s even if proxy options were stripped', async (key) => {
+      await expect(loadOrCreateBrowserFingerprint({
+        profileDir, options: makeLaunchOptions({ [key]: key.includes('latitude') ? 35.68 : '198.51.100.1' }), runtime,
+      })).rejects.toThrow(/GeoIP\/geolocation or WebRTC IP/);
+      expect(await fs.readdir(profileDir)).toEqual([]);
+    },
+  );
+
+  test('refuses a previously persisted GeoIP baseline even after proxy removal, without rewriting it', async () => {
+    const globalProfile = await loadOrCreateBrowserFingerprint({ profileDir, options: makeLaunchOptions(), runtime });
+    const record = JSON.parse(await fs.readFile(globalProfile.path, 'utf8'));
+    // Simulate a valid profile produced before the direct-only policy. Both
+    // checksums are valid: rejection must be a network policy error, not damage.
+    const stable = (value) => value && typeof value === 'object'
+      ? (Array.isArray(value) ? `[${value.map(stable).join(',')}]` : `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}`)
+      : JSON.stringify(value);
+    const digest = (value) => crypto.createHash('sha256').update(stable(value)).digest('hex');
+    record.camouConfig['webrtc:ipv4'] = '192.0.2.1';
+    record.camouConfig['geolocation:latitude'] = 40.71;
+    record.camouConfig.timezone = 'America/New_York';
+    record.camouConfigDigest = digest(record.camouConfig);
+    const { integrity, ...payload } = record;
+    record.integrity.digest = digest(payload);
+    await fs.writeFile(globalProfile.path, JSON.stringify(record), { mode: 0o600 });
+    const before = await fs.readFile(globalProfile.path);
+    const options = makeLaunchOptions();
+    const incomingEnv = { ...options.env };
+    await expect(loadOrCreateBrowserFingerprint({ profileDir, options, runtime }))
+      .rejects.toThrow(/network-bound identity/);
+    expect(await fs.readFile(globalProfile.path)).toEqual(before);
+    expect(options.env).toEqual(incomingEnv);
   });
 
   test('same userId reuses identity across sessions while other users get different native identity inputs', async () => {

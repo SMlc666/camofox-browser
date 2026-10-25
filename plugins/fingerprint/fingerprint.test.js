@@ -24,11 +24,34 @@ describe('fingerprint plugin lifecycle', () => {
     await register({}, {
       events,
       config: { profileDir: tempDir },
+      proxyPool: { canRotateSessions: true },
       registerSessionContextInitializer: registerInitializer,
       log: noop,
     }, { enabled: false });
     expect(events.eventNames()).toEqual([]);
     expect(registerInitializer).not.toHaveBeenCalled();
+    expect(await fs.readdir(tempDir)).toEqual([]);
+  });
+
+  test.each([
+    ['rotating proxy pool', { canRotateSessions: true }, undefined],
+    ['fixed proxy pool', { canRotateSessions: false }, undefined],
+    ['launch proxy override', null, { server: 'http://proxy.invalid:8080' }],
+  ])('fails closed for %s before persisting a baseline', async (_name, proxyPool, proxy) => {
+    const events = createPluginEvents();
+    let initialize;
+    await register({}, {
+      events, config: { profileDir: tempDir }, proxyPool,
+      registerSessionContextInitializer: (_name, callback) => { initialize = callback; },
+      log: noop,
+    }, { enabled: true });
+    await expect(events.emitAsync('browser:launching', { options: { proxy } }))
+      .rejects.toThrow(/direct connections only/);
+    const contextOptions = { proxy: proxy || { server: 'http://context-proxy.invalid:8080' } };
+    await expect(events.emitAsync('session:creating', { userId: 'user', contextOptions }))
+      .rejects.toThrow(/direct connections only/);
+    await expect(initialize({ userId: 'user', context: {}, contextOptions }))
+      .rejects.toThrow(/direct connections only/);
     expect(await fs.readdir(tempDir)).toEqual([]);
   });
 

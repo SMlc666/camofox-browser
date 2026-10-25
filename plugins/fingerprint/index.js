@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import {
+  assertFingerprintProxyPolicy,
   buildNativeFingerprintInitScript,
   contextFingerprintOptions,
   loadOrCreateBrowserFingerprint,
@@ -89,6 +90,7 @@ export async function register(_app, ctx, pluginConfig = {}) {
   }
 
   events.on('browser:launching', async ({ options }) => {
+    assertFingerprintProxyPolicy({ proxyPool: ctx.proxyPool, proxy: options?.proxy });
     const browserVersion = await browserVersionForExecutable(options?.executablePath);
     const runtime = { ...runtimeBase, browserVersion };
     browserProfile = await loadOrCreateBrowserFingerprint({
@@ -130,6 +132,7 @@ export async function register(_app, ctx, pluginConfig = {}) {
   });
 
   events.on('session:creating', async ({ userId, contextOptions }) => {
+    assertFingerprintProxyPolicy({ proxyPool: ctx.proxyPool, proxy: contextOptions?.proxy });
     await runtimeReady;
     if (!browserProfile) throw new Error('Camoufox fingerprint profile is unavailable');
 
@@ -143,7 +146,8 @@ export async function register(_app, ctx, pluginConfig = {}) {
     });
   });
 
-  registerSessionContextInitializer('fingerprint', async ({ userId, context }) => {
+  registerSessionContextInitializer('fingerprint', async ({ userId, context, contextOptions }) => {
+    assertFingerprintProxyPolicy({ proxyPool: ctx.proxyPool, proxy: contextOptions?.proxy });
     const { profile } = await loadUserProfile(userId);
     // Check this exact BrowserContext without invoking its one-shot setters,
     // then register them before the first real page. Repeated navigations are
