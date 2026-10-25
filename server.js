@@ -7188,14 +7188,19 @@ const pluginCtx = {
   failuresTotal,
   metricsRegistry: getRegister,
   createMetric,
-  registerSessionContextInitializer: (pluginName, initialize) => {
+  registerSessionContextInitializer: (pluginName, initialize, prepare) => {
     if (typeof pluginName !== 'string' || !pluginName || typeof initialize !== 'function') {
       throw new Error('registerSessionContextInitializer requires a plugin name and initializer function');
     }
     if (sessionContextInitializers.has(pluginName)) {
       throw new Error(`session context initializer already registered by plugin ${pluginName}`);
     }
-    sessionContextInitializers.set(pluginName, initialize);
+    if (prepare !== undefined && typeof prepare !== 'function') {
+      throw new Error('session context prepare hook must be a function');
+    }
+    const step = (...args) => initialize(...args);
+    step.prepare = prepare;
+    sessionContextInitializers.set(pluginName, step);
   },
   registerVirtualDisplayProvider: (pluginName, factory) => virtualDisplayRegistry.register(pluginName, factory),
   /** The upstream VirtualDisplay class -- plugins can subclass it. */

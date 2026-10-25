@@ -130,6 +130,7 @@ npm test                          # All tests (unit + e2e + plugin)
 npm run test:plugins              # All plugin tests
 npm run test:e2e                  # E2E tests
 npm run test:live                 # Live Google tests
+npm run test:fingerprint-service  # Opt-in Linux/Xvfb real REST + two MCP processes; requires CAMOFOX_FINGERPRINT_TEST_EXECUTABLE
 npm run test:debug                # With server output
 npx jest plugins/youtube          # Single plugin's tests
 ```
@@ -164,7 +165,7 @@ docker run -p 9377:9377 camofox-browser
 - `plugins/persistence/index.js` - Session persistence lifecycle hooks
 - `lib/persistence.js` - Atomic storage state read/write
 - `plugins/fingerprint/index.js` - Per-user native Camoufox fingerprint lifecycle hooks
-- `lib/fingerprint-persistence.js` - Secure fingerprint profiles and runtime compatibility checks
+- `lib/fingerprint-persistence.js` - Secure fingerprint profiles, external initialization anchors (`.fingerprint-registry/`) and runtime compatibility checks; missing records or preexisting unbound storageState fail closed
 - `mcp/lib/user-id.mjs` - Stable per-install MCP fallback user IDs across client/server reconnects (Windows uses a file-free home/install-derived label; user IDs are profile selectors, not tenant authorization)
 - `lib/inflight.js` - Inflight request coalescing
 - `lib/tmp-cleanup.js` - Orphaned temp file cleanup
@@ -323,7 +324,7 @@ export function register(app, ctx) {
 | `proxyPool` | `object\|null` | Proxy pool instance (null if no proxy configured) |
 | `failuresTotal` | `Counter` | Prometheus counter: `failuresTotal.labels(type, action).inc()` |
 | `createMetric` | `async function` | Create a Prometheus metric registered to the shared registry (see below) |
-| `registerSessionContextInitializer` | `function` | Register an async initializer applied after BrowserContext creation and before the session is exposed |
+| `registerSessionContextInitializer` | `function` | `(name, initialize, prepare?)`: optional `prepare({userId, contextOptions})` runs after all async session:creating hooks but before BrowserContext creation; `initialize({userId, context, contextOptions})` runs before session exposure. Failure rejects creation and closes any created Context |
 | `metricsRegistry` | `function` | `metricsRegistry()` -- raw prom-client Registry or null |
 
 ### Events (29)

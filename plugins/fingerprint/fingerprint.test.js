@@ -62,13 +62,13 @@ describe('fingerprint plugin lifecycle', () => {
     let initialize;
     await register({}, {
       events, config: { profileDir: tempDir }, proxyPool,
-      registerSessionContextInitializer: (_name, callback) => { initialize = callback; },
+      registerSessionContextInitializer: (_name, callback, prepare) => { initialize = callback; initialize.prepare = prepare; },
       log: noop,
     }, { enabled: true });
     await expect(events.emitAsync('browser:launching', { options: { proxy } }))
       .rejects.toThrow(/direct connections only/);
     const contextOptions = { proxy: proxy || { server: 'http://context-proxy.invalid:8080' } };
-    await expect(events.emitAsync('session:creating', { userId: 'user', contextOptions }))
+    await expect(initialize.prepare({ userId: 'user', contextOptions }))
       .rejects.toThrow(/direct connections only/);
     await expect(initialize({ userId: 'user', context: {}, contextOptions }))
       .rejects.toThrow(/direct connections only/);
@@ -84,7 +84,7 @@ describe('fingerprint plugin lifecycle', () => {
     const events = createPluginEvents();
     const registerInitializer = jest.fn();
     let initializeContext;
-    registerInitializer.mockImplementation((_name, callback) => { initializeContext = callback; });
+    registerInitializer.mockImplementation((_name, callback, prepare) => { initializeContext = callback; initializeContext.prepare = prepare; });
     const log = jest.fn();
     await register({}, {
       events,
@@ -127,7 +127,7 @@ describe('fingerprint plugin lifecycle', () => {
     events.emit('browser:launched', { browser });
 
     const contextOptions = { viewport: null };
-    await events.emitAsync('session:creating', { userId: 'stable-user', contextOptions });
+    await initializeContext.prepare({ userId: 'stable-user', contextOptions });
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(browser.newContext).toHaveBeenCalledWith({ viewport: null });
@@ -167,7 +167,7 @@ describe('fingerprint plugin lifecycle', () => {
     await register({}, {
       events,
       config: { profileDir: tempDir, directIdentity: null },
-      registerSessionContextInitializer: (_name, callback) => { initializeContext = callback; },
+      registerSessionContextInitializer: (_name, callback, prepare) => { initializeContext = callback; initializeContext.prepare = prepare; },
       log: noop,
     }, { enabled: true });
     const options = { executablePath: path.join(binaryDir, 'camoufox-bin'), env: {} };
@@ -189,7 +189,7 @@ describe('fingerprint plugin lifecycle', () => {
     const context = { newPage: async () => page, close: jest.fn() };
     const browser = { version: async () => '152.0.4-beta.30', newContext: async () => context, close: jest.fn() };
     events.emit('browser:launched', { browser });
-    await expect(events.emitAsync('session:creating', { userId: 'user', contextOptions: {} }))
+    await expect(initializeContext.prepare({ userId: 'user', contextOptions: {} }))
       .rejects.toThrow(/missing required per-context native fingerprint patches: setTimezone/);
     expect(browser.close).toHaveBeenCalled();
     expect(initializeContext).toEqual(expect.any(Function));

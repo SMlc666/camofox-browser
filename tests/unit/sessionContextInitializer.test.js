@@ -2,6 +2,20 @@ import { describe, expect, jest, test } from '@jest/globals';
 import { createInitializedContext } from '../../lib/session-context.js';
 
 describe('session context initializers', () => {
+  test('runs prepare hooks with final storageState before creating a context and refuses before cookie restore', async () => {
+    const browser = { newContext: jest.fn() };
+    const initialize = jest.fn();
+    initialize.prepare = jest.fn(async ({ contextOptions }) => {
+      expect(contextOptions.storageState).toBe('/external/storage-state.json');
+      throw new Error('unbound storageState');
+    });
+    await expect(createInitializedContext({
+      browser, userId: 'user', contextOptions: { storageState: '/external/storage-state.json' },
+      initializers: [initialize],
+    })).rejects.toThrow(/unbound storageState/);
+    expect(browser.newContext).not.toHaveBeenCalled();
+    expect(initialize).not.toHaveBeenCalled();
+  });
   test('runs each initializer before returning the new browser context', async () => {
     const context = { close: jest.fn() };
     const browser = { newContext: jest.fn(async () => context) };

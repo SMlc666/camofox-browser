@@ -112,10 +112,10 @@ describe('persistent per-user Camoufox fingerprints', () => {
     const storagePaths = getUserPersistencePaths(profileDir, 'account-A');
     await fs.mkdir(storagePaths.userDir, { recursive: true });
     const originalStorageState = JSON.stringify({ cookies: [{ name: 'existing', value: 'keep-me' }], origins: [] });
-    await fs.writeFile(storagePaths.storageStatePath, originalStorageState, { mode: 0o600 });
     const options = makeLaunchOptions();
     const globalProfile = await loadOrCreateBrowserFingerprint({ profileDir, options, runtime });
     const first = await loadOrCreateUserFingerprint({ profileDir, userId: 'account-A', sessionKey: 'task-1', runtime, globalProfile, globalConfig: globalProfile.config });
+    await fs.writeFile(storagePaths.storageStatePath, originalStorageState, { mode: 0o600 });
     const sameUser = await loadOrCreateUserFingerprint({ profileDir, userId: 'account-A', sessionKey: 'task-2', runtime, globalProfile, globalConfig: globalProfile.config });
     const otherUser = await loadOrCreateUserFingerprint({ profileDir, userId: 'account-B', runtime, globalProfile, globalConfig: globalProfile.config });
 
@@ -133,6 +133,57 @@ describe('persistent per-user Camoufox fingerprints', () => {
     expect(userPaths.userPath).not.toContain('account-A');
     expect((await fs.stat(userPaths.userPath)).mode & 0o777).toBe(0o600);
     expect(await fs.readFile(storagePaths.storageStatePath, 'utf8')).toBe(originalStorageState);
+  });
+
+  test.each(['fingerprint-directory', 'fingerprint-and-registry-directories'])(
+    'refuses %s loss while storageState survives, without changing saved login state', async (loss) => {
+      const globalProfile = await loadOrCreateBrowserFingerprint({ profileDir, options: makeLaunchOptions(), runtime });
+      const args = { profileDir, userId: 'bound-user', runtime, globalProfile, globalConfig: globalProfile.config };
+      await loadOrCreateUserFingerprint(args);
+      const storage = getUserPersistencePaths(profileDir, args.userId);
+      await fs.mkdir(storage.userDir, { recursive: true });
+      await fs.writeFile(storage.storageStatePath, JSON.stringify({ cookies: [], origins: [] }));
+      const before = await fs.readFile(storage.storageStatePath);
+      await fs.rm(path.join(profileDir, '.fingerprints'), { recursive: true });
+      if (loss === 'fingerprint-and-registry-directories') await fs.rm(path.join(profileDir, '.fingerprint-registry'), { recursive: true });
+      await expect(loadOrCreateBrowserFingerprint({ profileDir, options: makeLaunchOptions(), runtime }))
+        .rejects.toThrow(/missing|existing storageState/);
+      expect(await fs.readFile(storage.storageStatePath)).toEqual(before);
+      await expect(fs.stat(getFingerprintProfilePaths(profileDir, args.userId).browserPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    },
+  );
+
+  test.each(['identity', 'anchor', 'both'])(
+    'refuses missing user %s without silently pairing a replacement with old cookies', async (loss) => {
+      const globalProfile = await loadOrCreateBrowserFingerprint({ profileDir, options: makeLaunchOptions(), runtime });
+      const args = { profileDir, userId: 'bound-user', runtime, globalProfile, globalConfig: globalProfile.config };
+      await loadOrCreateUserFingerprint(args);
+      const paths = getFingerprintProfilePaths(profileDir, args.userId);
+      const storage = getUserPersistencePaths(profileDir, args.userId);
+      await fs.mkdir(storage.userDir, { recursive: true });
+      await fs.writeFile(storage.storageStatePath, '{"cookies":[],"origins":[]}');
+      if (loss !== 'anchor') await fs.unlink(paths.userPath);
+      if (loss !== 'identity') await fs.unlink(paths.userAnchorPath);
+      await expect(loadOrCreateUserFingerprint(args)).rejects.toThrow(/missing|existing storageState/);
+      expect(await fs.readFile(storage.storageStatePath, 'utf8')).toBe('{"cookies":[],"origins":[]}');
+    },
+  );
+
+  test('refuses external/in-memory storageState without a bound user identity', async () => {
+    const globalProfile = await loadOrCreateBrowserFingerprint({ profileDir, options: makeLaunchOptions(), runtime });
+    await expect(loadOrCreateUserFingerprint({
+      profileDir, userId: 'external-user', runtime, globalProfile, globalConfig: globalProfile.config,
+      storageState: { cookies: [], origins: [] },
+    })).rejects.toThrow(/existing storageState/);
+  });
+
+  test('concurrent first browser launches converge on one anchored global baseline', async () => {
+    const [a, b] = await Promise.all([
+      loadOrCreateBrowserFingerprint({ profileDir, options: makeLaunchOptions(), runtime }),
+      loadOrCreateBrowserFingerprint({ profileDir, options: makeLaunchOptions({ 'navigator.userAgent': 'different-candidate' }), runtime }),
+    ]);
+    expect(a.digest).toBe(b.digest);
+    expect(a.config).toEqual(b.config);
   });
 
   test('concurrent first-time contexts atomically converge on one persisted identity', async () => {

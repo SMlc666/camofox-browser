@@ -79,7 +79,7 @@ export async function register(_app, ctx, pluginConfig = {}) {
   const directIdentity = config.directIdentity || null;
   let browserProfile = null;
   let runtimeReady = Promise.resolve();
-  async function loadUserProfile(userId) {
+  async function loadUserProfile(userId, storageState) {
     if (!browserProfile) throw new Error('Camoufox fingerprint profile is unavailable');
     return loadOrCreateUserFingerprint({
       profileDir,
@@ -88,6 +88,7 @@ export async function register(_app, ctx, pluginConfig = {}) {
       globalProfile: browserProfile,
       globalConfig: browserProfile.config,
       directIdentity,
+      storageState,
     });
   }
 
@@ -133,12 +134,12 @@ export async function register(_app, ctx, pluginConfig = {}) {
     runtimeReady.catch(() => {});
   });
 
-  events.on('session:creating', async ({ userId, contextOptions }) => {
+  const prepareContext = async ({ userId, contextOptions }) => {
     assertFingerprintProxyPolicy({ proxyPool: ctx.proxyPool, proxy: contextOptions?.proxy });
     await runtimeReady;
     if (!browserProfile) throw new Error('Camoufox fingerprint profile is unavailable');
 
-    const { profile, path: profilePath } = await loadUserProfile(userId);
+    const { profile, path: profilePath } = await loadUserProfile(userId, contextOptions.storageState);
     Object.assign(contextOptions, contextFingerprintOptions(profile.identity));
     log('info', 'persistent per-user Camoufox fingerprint loaded', {
       userId,
@@ -146,7 +147,7 @@ export async function register(_app, ctx, pluginConfig = {}) {
       sharedSignals: profile.identity.scope.sharedAcrossUsers,
       browserSessionSignals: profile.identity.scope.browserSession,
     });
-  });
+  };
 
   registerSessionContextInitializer('fingerprint', async ({ userId, context, contextOptions }) => {
     assertFingerprintProxyPolicy({ proxyPool: ctx.proxyPool, proxy: contextOptions?.proxy });
@@ -157,7 +158,7 @@ export async function register(_app, ctx, pluginConfig = {}) {
     await verifyContextNativeFingerprintSetters(context);
     await context.addInitScript(buildNativeFingerprintInitScript(profile.identity));
     await verifyAppliedContextFingerprint(context, profile.identity);
-  });
+  }, prepareContext);
 
   log('info', 'persistent per-user Camoufox fingerprint plugin enabled', { profileDir });
 }
